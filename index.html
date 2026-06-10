@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Suraj · Daily Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ── SETUP SCREEN ── -->
+<div id="setupScreen" class="setup-screen hidden">
+  <div class="setup-card">
+    <div class="setup-logo">⬡</div>
+    <h1 class="setup-title">Connect Firebase</h1>
+    <p class="setup-sub">Paste your Firebase config to enable cross-device sync. Your data is stored privately in your own Firestore database.</p>
+    <textarea id="firebaseConfigInput" class="setup-textarea" placeholder='{
+  "apiKey": "...",
+  "authDomain": "...",
+  "projectId": "...",
+  "storageBucket": "...",
+  "messagingSenderId": "...",
+  "appId": "..."
+}'></textarea>
+    <div id="setupError" class="setup-error hidden"></div>
+    <button class="btn-primary" onclick="connectFirebase()">Connect & Start</button>
+    <p class="setup-hint">
+      <a href="https://console.firebase.google.com/" target="_blank">Create a free Firebase project →</a><br>
+      Project Settings → Your apps → SDK setup → Config object
+    </p>
+  </div>
+</div>
+
+<!-- ── APP ── -->
+<div id="app" class="hidden">
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-top">
+      <div class="brand">⬡ tracker</div>
+      <button class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()">‹</button>
+    </div>
+
+    <nav class="sidebar-nav">
+      <button class="nav-item active" onclick="showView('grid')" id="nav-grid">
+        <span class="nav-icon">▦</span><span class="nav-label">Grid</span>
+      </button>
+      <button class="nav-item" onclick="showView('progress')" id="nav-progress">
+        <span class="nav-icon">◎</span><span class="nav-label">Progress</span>
+      </button>
+      <button class="nav-item" onclick="showView('habits')" id="nav-habits">
+        <span class="nav-icon">✦</span><span class="nav-label">Habits</span>
+      </button>
+    </nav>
+
+    <div class="sidebar-bottom">
+      <div class="month-chip" id="sidebarMonth">—</div>
+      <div class="sync-status" id="syncStatus">
+        <span class="sync-dot"></span><span class="sync-label">Synced</span>
+      </div>
+      <button class="btn-ghost danger" onclick="confirmReset()">Reset Month</button>
+      <button class="btn-ghost small" onclick="changeFirebase()">Change DB</button>
+    </div>
+  </aside>
+
+  <!-- MAIN CONTENT -->
+  <main class="content" id="mainContent">
+
+    <!-- ── GRID VIEW ── -->
+    <div id="view-grid" class="view active">
+      <div class="view-header">
+        <div>
+          <div class="view-eyebrow" id="gridMonth">—</div>
+          <h2 class="view-title">Daily Habits</h2>
+        </div>
+        <div class="header-stats">
+          <div class="hstat">
+            <div class="hstat-val" id="hToday">0/0</div>
+            <div class="hstat-label">Today</div>
+          </div>
+          <div class="hstat">
+            <div class="hstat-val green" id="hSucc">0</div>
+            <div class="hstat-label">Successful</div>
+          </div>
+          <div class="hstat">
+            <div class="hstat-val amber" id="hStreak">0</div>
+            <div class="hstat-label">Streak</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="month-bar">
+        <span class="month-bar-label" id="dayProgress">Day 0 of 0</span>
+        <div class="month-bar-track"><div class="month-bar-fill" id="monthFill"></div></div>
+        <span class="month-bar-pct" id="monthPct">0%</span>
+      </div>
+
+      <div class="table-wrap">
+        <table class="htable" id="htable">
+          <thead id="hthead"></thead>
+          <tbody id="htbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── PROGRESS VIEW ── -->
+    <div id="view-progress" class="view">
+      <div class="view-header">
+        <div>
+          <div class="view-eyebrow" id="progressMonth">—</div>
+          <h2 class="view-title">Progress</h2>
+        </div>
+      </div>
+
+      <div class="progress-grid">
+        <div class="pcard big">
+          <div class="pcard-label">Overall Completion</div>
+          <div class="pcard-val" id="pOverall">0%</div>
+          <div class="pbar-wrap"><div class="pbar-fill green-fill" id="pOverallBar"></div></div>
+        </div>
+        <div class="pcard big">
+          <div class="pcard-label">Today's Completion</div>
+          <div class="pcard-val" id="pToday">0%</div>
+          <div class="pbar-wrap"><div class="pbar-fill amber-fill" id="pTodayBar"></div></div>
+        </div>
+        <div class="pcard">
+          <div class="pcard-label">Current Streak</div>
+          <div class="pcard-val green" id="pStreak">0</div>
+          <div class="pcard-sub" id="pBestStreak">Best: 0 days</div>
+        </div>
+        <div class="pcard">
+          <div class="pcard-label">Successful Days</div>
+          <div class="pcard-val amber" id="pSuccDays">0</div>
+          <div class="pcard-sub" id="pSuccSub">of 0 days passed</div>
+        </div>
+        <div class="pcard">
+          <div class="pcard-label">Failed Days</div>
+          <div class="pcard-val red" id="pFailDays">0</div>
+          <div class="pcard-sub" id="pFailSub">marked as failed</div>
+        </div>
+        <div class="pcard">
+          <div class="pcard-label">Unmarked Days</div>
+          <div class="pcard-val dim" id="pUnmarked">0</div>
+          <div class="pcard-sub">need review</div>
+        </div>
+      </div>
+
+      <!-- Month heatmap -->
+      <div class="section-head">Month Overview</div>
+      <div class="heatmap" id="heatmap"></div>
+      <div class="heatmap-legend">
+        <span class="hl-item"><span class="hl-dot succ"></span> Successful</span>
+        <span class="hl-item"><span class="hl-dot fail"></span> Failed</span>
+        <span class="hl-item"><span class="hl-dot none"></span> Unmarked</span>
+        <span class="hl-item"><span class="hl-dot future"></span> Future</span>
+      </div>
+
+      <!-- Per-habit completion -->
+      <div class="section-head">Habit Completion Rates</div>
+      <div class="habit-bars" id="habitBars"></div>
+    </div>
+
+    <!-- ── HABITS VIEW ── -->
+    <div id="view-habits" class="view">
+      <div class="view-header">
+        <div>
+          <div class="view-eyebrow">Manage</div>
+          <h2 class="view-title">Habits</h2>
+        </div>
+        <button class="btn-primary" onclick="openAddHabit()">+ Add Habit</button>
+      </div>
+
+      <div class="habits-list" id="habitsList"></div>
+    </div>
+
+  </main>
+</div>
+
+<!-- ── NOTE MODAL ── -->
+<div class="modal-overlay hidden" id="noteModal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title" id="noteModalTitle">Notes</div>
+      <button class="modal-close" onclick="closeModal('noteModal')">✕</button>
+    </div>
+    <textarea class="modal-textarea" id="noteText" placeholder="What happened today?"></textarea>
+    <div class="modal-actions">
+      <button class="btn-ghost" onclick="closeModal('noteModal')">Cancel</button>
+      <button class="btn-primary" onclick="saveNote()">Save Note</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── HABIT MODAL ── -->
+<div class="modal-overlay hidden" id="habitModal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title" id="habitModalTitle">Add Habit</div>
+      <button class="modal-close" onclick="closeModal('habitModal')">✕</button>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Habit name</label>
+      <input class="form-input" id="habitNameInput" type="text" placeholder="e.g. Morning run" maxlength="60">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Category (optional)</label>
+      <input class="form-input" id="habitCatInput" type="text" placeholder="e.g. Morning, Health, Evening" maxlength="30">
+    </div>
+    <div id="habitModalError" class="setup-error hidden"></div>
+    <div class="modal-actions">
+      <button class="btn-ghost" onclick="closeModal('habitModal')">Cancel</button>
+      <button class="btn-primary" onclick="saveHabit()">Save Habit</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── DAY DETAIL MODAL ── -->
+<div class="modal-overlay hidden" id="dayModal">
+  <div class="modal wide">
+    <div class="modal-header">
+      <div class="modal-title" id="dayModalTitle">Day Detail</div>
+      <button class="modal-close" onclick="closeModal('dayModal')">✕</button>
+    </div>
+    <div id="dayModalContent"></div>
+  </div>
+</div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
