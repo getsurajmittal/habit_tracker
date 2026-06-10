@@ -73,6 +73,9 @@
 
   <!-- MAIN CONTENT -->
   <main class="content" id="mainContent">
+    <div class="global-top">
+      <button id="mobileMenuBtn" class="mobile-menu-btn" aria-label="Open menu" onclick="toggleSidebar()">☰</button>
+    </div>
 
     <!-- ── GRID VIEW ── -->
     <div id="view-grid" class="view active">
@@ -80,7 +83,6 @@
         <div>
           <div style="display:flex;align-items:center;gap:12px">
             <div class="view-eyebrow" id="gridMonth">—</div>
-            <button id="mobileMenuBtn" class="mobile-menu-btn" aria-label="Open menu" onclick="toggleSidebar()">☰</button>
             <div class="day-nav">
               <button class="nav-btn" onclick="prevDay()">◂</button>
               <button class="btn-ghost small" onclick="goToToday()">Today</button>
