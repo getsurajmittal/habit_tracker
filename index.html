@@ -56,7 +56,13 @@
     </nav>
 
     <div class="sidebar-bottom">
-      <div class="month-chip" id="sidebarMonth">—</div>
+      <div class="month-nav">
+        <button class="nav-btn" onclick="prevMonth()">‹</button>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <div class="month-chip" id="sidebarMonth">—</div>
+        </div>
+        <button class="nav-btn" onclick="nextMonth()">›</button>
+      </div>
       <div class="sync-status" id="syncStatus">
         <span class="sync-dot"></span><span class="sync-label">Synced</span>
       </div>
@@ -72,8 +78,17 @@
     <div id="view-grid" class="view active">
       <div class="view-header">
         <div>
-          <div class="view-eyebrow" id="gridMonth">—</div>
+          <div style="display:flex;align-items:center;gap:12px">
+            <div class="view-eyebrow" id="gridMonth">—</div>
+            <div class="day-nav">
+              <button class="nav-btn" onclick="prevDay()">◂</button>
+              <button class="btn-ghost small" onclick="goToToday()">Today</button>
+              <button class="nav-btn" onclick="nextDay()">▸</button>
+              <button class="btn-ghost small" onclick="openMonthNote()">Month Notes</button>
+            </div>
+          </div>
           <h2 class="view-title">Daily Habits</h2>
+          <div id="dashboardStickyNote" class="dashboard-sticky hidden" onclick="openMonthNote()"></div>
         </div>
         <div class="header-stats">
           <div class="hstat">

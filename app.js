@@ -14,11 +14,34 @@ let state = {
   notes: {}         // {day: string}
 };
 
-const TODAY = new Date();
-const YEAR = TODAY.getFullYear();
-const MONTH = TODAY.getMonth();
-const TODAY_DAY = TODAY.getDate();
-const DAYS_IN_MONTH = new Date(YEAR, MONTH + 1, 0).getDate();
+// Single month-level note (stored in month doc under `monthNote`)
+// Global guideline note (shared across months)
+state.globalNote = '';
+
+// Current actual date (constants)
+const NOW = new Date();
+const CURRENT_YEAR = NOW.getFullYear();
+const CURRENT_MONTH = NOW.getMonth();
+const CURRENT_DAY = NOW.getDate();
+
+// View state (what the user is looking at). Defaults to today.
+let viewYear = CURRENT_YEAR;
+let viewMonth = CURRENT_MONTH;
+let viewDay = CURRENT_DAY;
+let singleDayView = true; // show one day by default
+
+const TODAY = NOW;
+const YEAR = CURRENT_YEAR;
+const MONTH = CURRENT_MONTH;
+const TODAY_DAY = CURRENT_DAY;
+function DAYS_IN_VIEW() { return new Date(viewYear, viewMonth + 1, 0).getDate(); }
+function isFuture(day) {
+  if (viewYear > CURRENT_YEAR) return true;
+  if (viewYear < CURRENT_YEAR) return false;
+  if (viewMonth > CURRENT_MONTH) return true;
+  if (viewMonth < CURRENT_MONTH) return false;
+  return day > CURRENT_DAY;
+}
 const MONTH_NAMES = ['January','February','March','April','May','June',
   'July','August','September','October','November','December'];
 
@@ -78,31 +101,21 @@ async function initFirebase(config) {
 
   const app = initializeApp(config, config.projectId); // unique name prevents re-init error
   db = getFirestore(app);
-
-  MONTH_DOC_ID = `${YEAR}-${String(MONTH+1).padStart(2,'0')}`;
-
+  // Enable IndexedDB offline persistence where supported
+  try {
+    const { enableIndexedDbPersistence } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+    await enableIndexedDbPersistence(db);
+    console.log('Firestore IndexedDB persistence enabled');
+  } catch (err) {
+    // Common cases: multiple tabs (failed-precondition) or unsupported browser (unimplemented)
+    console.warn('Could not enable IndexedDB persistence:', err.code || err.message || err);
+  }
   // Show app, hide setup
   document.getElementById('setupScreen').classList.add('hidden');
   document.getElementById('app').classList.remove('hidden');
 
-  // Load or create month doc
-  const monthRef = doc(db, 'tracker', MONTH_DOC_ID);
-
-  // Real-time listener
-  if (unsubscribe) unsubscribe();
-  unsubscribe = onSnapshot(monthRef, (snap) => {
-    if (snap.exists()) {
-      const data = snap.data();
-      state.checks = data.checks || {};
-      state.successDays = data.successDays || {};
-      state.notes = data.notes || {};
-    }
-    render();
-    setSyncStatus('synced');
-  }, (err) => {
-    console.error(err);
-    setSyncStatus('offline');
-  });
+  // Subscribe to the currently viewed month (defaults to current month)
+  subscribeToMonth(viewYear, viewMonth);
 
   // Load habits from separate doc (persist across months)
   const habitsRef = doc(db, 'tracker', 'habits');
@@ -123,7 +136,43 @@ async function initFirebase(config) {
     }
   });
 
+  // Global guideline note (stored in tracker/global)
+  const { onSnapshot: onSnap2, doc: doc2, getDoc: getDoc2 } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+  const globalRef = doc(db, 'tracker', 'global');
+  const globalSnap = await getDoc2(globalRef);
+  if (globalSnap.exists()) state.globalNote = globalSnap.data().monthNote || '';
+  onSnap2(globalRef, (snap) => {
+    if (snap.exists()) state.globalNote = snap.data().monthNote || '';
+    render();
+  });
+
   render();
+}
+
+// Subscribe to a month document and listen in real-time
+async function subscribeToMonth(y, m) {
+  if (!db) return;
+  if (unsubscribe) unsubscribe();
+  MONTH_DOC_ID = `${y}-${String(m+1).padStart(2,'0')}`;
+  const { doc, onSnapshot } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+  const monthRef = doc(db, 'tracker', MONTH_DOC_ID);
+  unsubscribe = onSnapshot(monthRef, (snap) => {
+    if (snap.exists()) {
+      const data = snap.data();
+      state.checks = data.checks || {};
+      state.successDays = data.successDays || {};
+      state.notes = data.notes || {};
+    } else {
+      state.checks = {};
+      state.successDays = {};
+      state.notes = {};
+    }
+    render();
+    setSyncStatus('synced');
+  }, (err) => {
+    console.error(err);
+    setSyncStatus('offline');
+  });
 }
 
 // ── DEFAULT HABITS ────────────────────────────────────────────────────────────
@@ -171,10 +220,17 @@ async function flushSave() {
     checks: state.checks,
     successDays: state.successDays,
     notes: state.notes,
-    year: YEAR,
-    month: MONTH + 1,
+    year: viewYear,
+    month: viewMonth + 1,
     updatedAt: Date.now()
   });
+}
+
+async function saveGlobalNote() {
+  if (!db) return;
+  const { doc, setDoc } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+  const gRef = doc(db, 'tracker', 'global');
+  await setDoc(gRef, { monthNote: state.globalNote });
 }
 
 async function saveHabits() {
@@ -194,10 +250,35 @@ function render() {
 }
 
 function renderLabels() {
-  const label = `${MONTH_NAMES[MONTH]} ${YEAR}`;
+  const label = `${MONTH_NAMES[viewMonth]} ${viewYear}`;
   document.getElementById('sidebarMonth').textContent = label;
   document.getElementById('gridMonth').textContent = label;
   document.getElementById('progressMonth').textContent = label;
+  // Show month note preview in sidebar
+  const noteEl = document.getElementById('sidebarMonthNote');
+  if (noteEl) {
+    if (state.globalNote && state.globalNote.trim()) {
+      const firstLine = state.globalNote.split('\n')[0];
+      noteEl.textContent = firstLine.length > 40 ? firstLine.slice(0,40) + '…' : firstLine;
+      noteEl.title = state.globalNote;
+      noteEl.classList.remove('empty');
+    } else {
+      noteEl.textContent = '(no month note)';
+      noteEl.title = '';
+      noteEl.classList.add('empty');
+    }
+  }
+  // dashboard sticky note (main area)
+  const dashNote = document.getElementById('dashboardStickyNote');
+  if (dashNote) {
+    if (state.globalNote && state.globalNote.trim()) {
+      dashNote.textContent = state.globalNote;
+      dashNote.classList.remove('hidden');
+    } else {
+      dashNote.textContent = '';
+      dashNote.classList.add('hidden');
+    }
+  }
 }
 
 // ── GRID ──────────────────────────────────────────────────────────────────────
@@ -208,11 +289,16 @@ function renderGrid() {
 }
 
 function renderGridHead() {
+  const dim = DAYS_IN_VIEW();
+  const days = singleDayView ? [viewDay] : Array.from({length: dim}, (_,i) => i+1);
   let html = `<tr>
     <th class="th-task">Habit</th>`;
-  for (let d = 1; d <= DAYS_IN_MONTH; d++) {
-    html += `<th class="${d === TODAY_DAY ? 'th-today' : ''}">${d}</th>`;
-  }
+  days.forEach(d => {
+    const isToday = (viewYear === CURRENT_YEAR && viewMonth === CURRENT_MONTH && d === CURRENT_DAY);
+    html += `<th class="${isToday ? 'th-today' : ''}">${d}</th>`;
+  });
+  // Notes column
+  html += `<th class="th-notes">Notes</th>`;
   html += `<th class="th-pct">%</th></tr>`;
   document.getElementById('hthead').innerHTML = html;
 }
@@ -220,8 +306,10 @@ function renderGridHead() {
 function renderGridBody() {
   const habits = state.habits;
   if (!habits.length) {
+    const dim = DAYS_IN_VIEW();
+    const days = singleDayView ? [viewDay] : Array.from({length: dim}, (_,i) => i+1);
     document.getElementById('htbody').innerHTML =
-      `<tr><td colspan="${DAYS_IN_MONTH+2}" style="padding:40px;text-align:center;color:var(--text-dim);font-size:13px">
+      `<tr><td colspan="${days.length + 3}" style="padding:40px;text-align:center;color:var(--text-dim);font-size:13px">
         No habits yet — add some in the Habits tab.
       </td></tr>`;
     return;
@@ -238,8 +326,10 @@ function renderGridBody() {
   let html = '';
   Object.entries(catMap).forEach(([cat, catHabits]) => {
     // Section row
+    const dim = DAYS_IN_VIEW();
+    const days = singleDayView ? [viewDay] : Array.from({length: dim}, (_,i) => i+1);
     html += `<tr class="row-section">
-      <td class="section-name" colspan="${DAYS_IN_MONTH+2}">${cat}</td>
+      <td class="section-name" colspan="${days.length + 3}">${cat}</td>
     </tr>`;
 
     catHabits.forEach(habit => {
@@ -248,49 +338,67 @@ function renderGridBody() {
       html += `<td class="td-task">${habit.name}</td>`;
 
       let doneCount = 0;
-      for (let d = 1; d <= DAYS_IN_MONTH; d++) {
+      const dim2 = DAYS_IN_VIEW();
+      const days2 = singleDayView ? [viewDay] : Array.from({length: dim2}, (_,i) => i+1);
+      days2.forEach(d => {
         const checked = state.checks[d]?.[tid];
-        const future = d > TODAY_DAY;
-        if (checked && d <= TODAY_DAY) doneCount++;
+        const future = isFuture(d);
+        if (checked && !future) doneCount++;
         html += `<td>
           <button class="chk ${checked ? 'checked' : ''} ${future ? 'future' : ''}"
             onclick="toggleCheck(${d},'${tid}',this)"
             title="${habit.name} — Day ${d}">${checked ? '✓' : ''}</button>
         </td>`;
-      }
-      const pct = TODAY_DAY > 0 ? Math.round(doneCount / TODAY_DAY * 100) : 0;
+      });
+      const visibleDays = (viewYear === CURRENT_YEAR && viewMonth === CURRENT_MONTH) ? CURRENT_DAY : DAYS_IN_VIEW();
+      const pct = visibleDays > 0 ? Math.round(doneCount / visibleDays * 100) : 0;
       html += `<td class="td-pct">${pct}%</td></tr>`;
     });
   });
 
   // ── Successful Day row ──
-  html += `<tr class="row-section"><td class="section-name" colspan="${DAYS_IN_MONTH+2}">Daily Verdict</td></tr>`;
+  const dim3 = DAYS_IN_VIEW();
+  const days3 = singleDayView ? [viewDay] : Array.from({length: dim3}, (_,i) => i+1);
+  html += `<tr class="row-section"><td class="section-name" colspan="${days3.length + 3}">Daily Verdict</td></tr>`;
   html += `<tr class="row-succ">
     <td class="td-task" style="font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--green)">✦ Successful Day</td>`;
-  for (let d = 1; d <= DAYS_IN_MONTH; d++) {
+  days3.forEach(d => {
     const v = state.successDays[d];
-    const future = d > TODAY_DAY;
+    const future = isFuture(d);
     let cls = future ? 'future' : '';
     let icon = '·';
     if (v === 'success') { cls += ' success'; icon = '✓'; }
     if (v === 'fail')    { cls += ' fail';    icon = '✕'; }
     html += `<td><button class="daybtn ${cls}"
       onclick="cycleDay(${d},this)" title="Day ${d}">${icon}</button></td>`;
-  }
+  });
   html += `<td></td></tr>`;
 
   // ── Notes row ──
   html += `<tr class="row-note">
     <td class="td-task" style="font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--purple)">✎ Notes</td>`;
-  for (let d = 1; d <= DAYS_IN_MONTH; d++) {
+  days3.forEach(d => {
     const has = !!state.notes[d];
-    const future = d > TODAY_DAY;
-    html += `<td><button class="notebtn ${has ? 'has-note' : ''} ${future ? 'future' : ''}"
-      onclick="openNote(${d})" title="${has ? 'View/edit note' : 'Add note'}">✎</button></td>`;
-  }
+    const future = isFuture(d);
+    html += `<td><button data-day="${d}" class="notebtn ${has ? 'has-note' : ''} ${future ? 'future' : ''}"
+      title="${has ? 'View/edit note' : 'Add note'}">✎</button></td>`;
+  });
+  // spacer for month-notes column
+  html += `<td></td>`;
   html += `<td></td></tr>`;
 
   document.getElementById('htbody').innerHTML = html;
+  // Attach explicit click handlers to note buttons (more reliable than inline onclick)
+  document.querySelectorAll('.notebtn').forEach(btn => {
+    const dayAttr = btn.getAttribute('data-day');
+    if (!dayAttr) return;
+    const dayNum = Number(dayAttr);
+    // ensure future buttons don't react
+    if (btn.classList.contains('future')) return;
+    btn.addEventListener('click', (e) => { e.stopPropagation(); openNote(dayNum); });
+  });
+  // Toggle table class for single-day styling
+  document.getElementById('htable').classList.toggle('single-day', singleDayView);
 }
 
 // ── INTERACTIONS ──────────────────────────────────────────────────────────────
@@ -306,13 +414,13 @@ function toggleCheck(day, habitId, btn) {
 }
 
 function cycleDay(day, btn) {
-  if (day > TODAY_DAY) return;
+  if (isFuture(day)) return;
   const cur = state.successDays[day];
   const next = !cur ? 'success' : cur === 'success' ? 'fail' : undefined;
   if (next) state.successDays[day] = next;
   else delete state.successDays[day];
 
-  btn.className = 'daybtn' + (day > TODAY_DAY ? ' future' : '');
+  btn.className = 'daybtn' + (isFuture(day) ? ' future' : '');
   if (next === 'success') { btn.classList.add('success'); btn.textContent = '✓'; }
   else if (next === 'fail') { btn.classList.add('fail'); btn.textContent = '✕'; }
   else btn.textContent = '·';
@@ -325,26 +433,53 @@ function cycleDay(day, btn) {
 // ── NOTES ─────────────────────────────────────────────────────────────────────
 
 let activeNoteDay = null;
+let activeMonthHabit = null;
+let activeMonthNote = false;
 function openNote(day) {
-  if (day > TODAY_DAY) return;
+  if (isFuture(day)) return;
+  activeMonthNote = false;
+  activeMonthHabit = null;
   activeNoteDay = day;
+  console.log('openNote: opening day note for', viewMonth, day);
   document.getElementById('noteModalTitle').textContent =
-    `Notes — ${MONTH_NAMES[MONTH]} ${day}`;
+    `Notes — ${MONTH_NAMES[viewMonth]} ${day}`;
   document.getElementById('noteText').value = state.notes[day] || '';
   openModal('noteModal');
   setTimeout(() => document.getElementById('noteText').focus(), 60);
 }
 
+function openMonthNote() {
+  activeNoteDay = null;
+  activeMonthHabit = null;
+  activeMonthNote = true;
+  document.getElementById('noteModalTitle').textContent = `Month Notes — ${MONTH_NAMES[viewMonth]} ${viewYear}`;
+  document.getElementById('noteText').value = state.globalNote || '';
+  console.log('openMonthNote: opening month note editor');
+  openModal('noteModal');
+  setTimeout(() => document.getElementById('noteText').focus(), 60);
+}
+
 function saveNote() {
-  if (!activeNoteDay) return;
   const v = document.getElementById('noteText').value.trim();
-  if (v) state.notes[activeNoteDay] = v;
-  else delete state.notes[activeNoteDay];
+  if (activeMonthNote) {
+    state.globalNote = v || '';
+    activeMonthNote = false;
+    // persist global note immediately
+    saveGlobalNote().catch(e => console.warn('saveGlobalNote failed', e));
+  } else if (activeMonthHabit) {
+    // legacy: no-op (per-habit month notes removed)
+  } else {
+    if (!activeNoteDay) return;
+    if (v) state.notes[activeNoteDay] = v;
+    else delete state.notes[activeNoteDay];
+  }
   closeModal('noteModal');
   renderGrid();
   renderProgressView();
   scheduleSave();
 }
+
+// removed per-habit month note function — now using a single month note
 
 // ── HABIT CRUD ────────────────────────────────────────────────────────────────
 
@@ -463,8 +598,8 @@ function renderStats() {
   const habits = state.habits;
   const n = habits.length;
 
-  // Today
-  const todayMap = state.checks[TODAY_DAY] || {};
+  // Viewed day (shows counts for the currently selected day)
+  const todayMap = state.checks[viewDay] || {};
   const todayDone = habits.filter(h => todayMap[h.id]).length;
   document.getElementById('hToday').textContent = `${todayDone}/${n}`;
 
@@ -474,7 +609,7 @@ function renderStats() {
 
   // Streak
   let streak = 0;
-  for (let d = TODAY_DAY; d >= 1; d--) {
+  for (let d = viewDay; d >= 1; d--) {
     if (state.successDays[d] === 'success') streak++;
     else break;
   }
@@ -492,15 +627,17 @@ function renderProgressView() {
   const n = habits.length;
   if (!n) return;
 
-  // Month bar
-  const mPct = Math.round(TODAY_DAY / DAYS_IN_MONTH * 100);
+  // Month bar (based on viewed month)
+  const daysIn = DAYS_IN_VIEW();
+  const visibleDays = (viewYear === CURRENT_YEAR && viewMonth === CURRENT_MONTH) ? CURRENT_DAY : daysIn;
+  const mPct = Math.round(visibleDays / daysIn * 100);
   document.getElementById('monthFill').style.width = mPct + '%';
-  document.getElementById('dayProgress').textContent = `Day ${TODAY_DAY} of ${DAYS_IN_MONTH}`;
+  document.getElementById('dayProgress').textContent = `Day ${Math.min(viewDay, daysIn)} of ${daysIn}`;
   document.getElementById('monthPct').textContent = mPct + '%';
 
   // Overall
   let total = 0, done = 0;
-  for (let d = 1; d <= TODAY_DAY; d++) {
+  for (let d = 1; d <= visibleDays; d++) {
     const dm = state.checks[d] || {};
     habits.forEach(h => {
       total++;
@@ -512,7 +649,7 @@ function renderProgressView() {
   document.getElementById('pOverallBar').style.width = overallPct + '%';
 
   // Today
-  const todayMap = state.checks[TODAY_DAY] || {};
+  const todayMap = state.checks[viewDay] || {};
   const todayDone = habits.filter(h => todayMap[h.id]).length;
   const todayPct = n ? Math.round(todayDone/n*100) : 0;
   document.getElementById('pToday').textContent = todayPct + '%';
@@ -521,19 +658,19 @@ function renderProgressView() {
   // Success / fail / unmarked
   const succDays = Object.values(state.successDays).filter(v=>v==='success').length;
   const failDays = Object.values(state.successDays).filter(v=>v==='fail').length;
-  const unmarked = TODAY_DAY - succDays - failDays;
+  const unmarked = visibleDays - succDays - failDays;
   document.getElementById('pSuccDays').textContent = succDays;
-  document.getElementById('pSuccSub').textContent = `of ${TODAY_DAY} days passed`;
+  document.getElementById('pSuccSub').textContent = `of ${visibleDays} days passed`;
   document.getElementById('pFailDays').textContent = failDays;
   document.getElementById('pUnmarked').textContent = Math.max(0, unmarked);
 
   // Streak
   let streak = 0, bestStreak = 0, cur = 0;
-  for (let d = TODAY_DAY; d >= 1; d--) {
+  for (let d = viewDay; d >= 1; d--) {
     if (state.successDays[d] === 'success') streak++;
     else break;
   }
-  for (let d = 1; d <= TODAY_DAY; d++) {
+  for (let d = 1; d <= visibleDays; d++) {
     if (state.successDays[d] === 'success') { cur++; bestStreak = Math.max(bestStreak, cur); }
     else cur = 0;
   }
@@ -542,15 +679,17 @@ function renderProgressView() {
 
   // Heatmap
   let hmHtml = '';
-  for (let d = 1; d <= DAYS_IN_MONTH; d++) {
+  const daysInMonth = DAYS_IN_VIEW();
+  for (let d = 1; d <= daysInMonth; d++) {
     const v = state.successDays[d];
-    const future = d > TODAY_DAY;
+    const future = isFuture(d);
     const hasNote = !!state.notes[d];
     let cls = '';
     if (future) cls = 'future-hm';
     else if (v === 'success') cls = 'succ';
     else if (v === 'fail') cls = 'fail';
-    if (d === TODAY_DAY) cls += ' today-hm';
+    if (viewYear === CURRENT_YEAR && viewMonth === CURRENT_MONTH && d === CURRENT_DAY) cls += ' today-hm';
+    if (d === viewDay) cls += ' today-hm';
     if (hasNote) cls += ' has-note';
     hmHtml += `<div class="hm-day ${cls}" onclick="openDayModal(${d})" title="Day ${d}">${d}</div>`;
   }
@@ -560,10 +699,10 @@ function renderProgressView() {
   let barsHtml = '';
   habits.forEach(h => {
     let hdone = 0;
-    for (let d = 1; d <= TODAY_DAY; d++) {
+    for (let d = 1; d <= visibleDays; d++) {
       if (state.checks[d]?.[h.id]) hdone++;
     }
-    const pct = TODAY_DAY ? Math.round(hdone/TODAY_DAY*100) : 0;
+    const pct = visibleDays ? Math.round(hdone/visibleDays*100) : 0;
     barsHtml += `<div class="hbar-row">
       <div class="hbar-name" title="${h.name}">${h.name}</div>
       <div class="hbar-track"><div class="hbar-fill" style="width:${pct}%"></div></div>
@@ -577,14 +716,14 @@ function renderProgressView() {
 
 function openDayModal(day) {
   document.getElementById('dayModalTitle').textContent =
-    `${MONTH_NAMES[MONTH]} ${day}, ${YEAR}`;
+    `${MONTH_NAMES[viewMonth]} ${day}, ${viewYear}`;
 
   const dayMap = state.checks[day] || {};
   const done = state.habits.filter(h => dayMap[h.id]);
   const pending = state.habits.filter(h => !dayMap[h.id]);
   const v = state.successDays[day];
   const note = state.notes[day];
-  const future = day > TODAY_DAY;
+  const future = isFuture(day);
 
   let html = `<div class="day-modal-tasks">`;
   done.forEach(h => {
@@ -634,6 +773,27 @@ function setDayVerdict(day, verdict) {
 
 // ── NAV ───────────────────────────────────────────────────────────────────────
 
+function changeViewMonth(offset) {
+  let m = viewMonth + offset;
+  let y = viewYear;
+  if (m < 0) { m = 11; y -= 1; }
+  if (m > 11) { m = 0; y += 1; }
+  viewMonth = m; viewYear = y;
+  // clamp viewDay
+  const dim = DAYS_IN_VIEW();
+  if (viewDay > dim) viewDay = dim;
+  subscribeToMonth(viewYear, viewMonth);
+  render();
+}
+
+function prevMonth() { changeViewMonth(-1); }
+function nextMonth() { changeViewMonth(1); }
+
+function prevDay() { viewDay = Math.max(1, viewDay - 1); render(); }
+function nextDay() { viewDay = Math.min(DAYS_IN_VIEW(), viewDay + 1); render(); }
+function goToToday() { viewYear = CURRENT_YEAR; viewMonth = CURRENT_MONTH; viewDay = CURRENT_DAY; subscribeToMonth(viewYear, viewMonth); render(); }
+
+
 function showView(name) {
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
@@ -669,10 +829,11 @@ document.addEventListener('keydown', e => {
 // ── RESET ─────────────────────────────────────────────────────────────────────
 
 async function confirmReset() {
-  if (!confirm(`Reset all data for ${MONTH_NAMES[MONTH]} ${YEAR}? This cannot be undone.`)) return;
+  if (!confirm(`Reset all data for ${MONTH_NAMES[viewMonth]} ${viewYear}? This cannot be undone.`)) return;
   state.checks = {};
   state.successDays = {};
   state.notes = {};
+  // Keep `monthNote` and habits intact
   await flushSave();
   render();
 }
@@ -709,10 +870,12 @@ Object.assign(window, {
   showView, toggleSidebar,
   toggleCheck, cycleDay,
   openNote, saveNote,
+  openMonthNote,
   openAddHabit, openEditHabit, saveHabit, deleteHabit,
   dragStart, dragOver, drop,
   openDayModal, setDayVerdict,
   openModal, closeModal,
+  prevMonth, nextMonth, prevDay, nextDay, goToToday,
 });
 
 // ── START ─────────────────────────────────────────────────────────────────────
