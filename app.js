@@ -971,7 +971,17 @@ function showView(name) {
 }
 
 function toggleSidebar() {
-  document.getElementById("sidebar").classList.toggle("collapsed");
+  const sidebar = document.getElementById("sidebar");
+  const backdrop = document.getElementById("mobileBackdrop");
+  // On small screens, open as overlay drawer
+  if (window.innerWidth <= 640) {
+    const open = sidebar.classList.toggle("mobile-open");
+    if (backdrop) backdrop.classList.toggle("hidden", !open);
+    document.body.style.overflow = open ? "hidden" : "";
+    return;
+  }
+  // Desktop: collapse/expand
+  sidebar.classList.toggle("collapsed");
 }
 
 // ── MODALS ────────────────────────────────────────────────────────────────────

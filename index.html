@@ -80,6 +80,7 @@
         <div>
           <div style="display:flex;align-items:center;gap:12px">
             <div class="view-eyebrow" id="gridMonth">—</div>
+            <button id="mobileMenuBtn" class="mobile-menu-btn" aria-label="Open menu" onclick="toggleSidebar()">☰</button>
             <div class="day-nav">
               <button class="nav-btn" onclick="prevDay()">◂</button>
               <button class="btn-ghost small" onclick="goToToday()">Today</button>
@@ -192,6 +193,9 @@
 
   </main>
 </div>
+
+<!-- Mobile backdrop for sidebar drawer -->
+<div id="mobileBackdrop" class="mobile-backdrop hidden" onclick="toggleSidebar()"></div>
 
 <!-- ── NOTE MODAL ── -->
 <div class="modal-overlay hidden" id="noteModal">
