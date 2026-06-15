@@ -16,16 +16,19 @@ A personal habit tracker with cross-device sync via Firebase, hosted on GitHub P
 ## Set Up Firebase (one-time, 5 minutes)
 
 ### 1. Create a Firebase project
+
 - Go to [console.firebase.google.com](https://console.firebase.google.com/)
 - Click **Add project** → give it a name → Create
 
 ### 2. Enable Firestore
+
 - In the left sidebar: **Build → Firestore Database**
 - Click **Create database**
 - Choose **Start in test mode** (you can lock it down later)
 - Pick any region → Done
 
 ### 3. Get your config
+
 - Click the gear icon → **Project settings**
 - Scroll to **Your apps** → click the `</>` Web icon
 - Register the app → you'll see a config object like:
@@ -42,6 +45,7 @@ A personal habit tracker with cross-device sync via Firebase, hosted on GitHub P
 ```
 
 ### 4. Connect
+
 - Open your tracker URL
 - Paste the config JSON → click **Connect & Start**
 - Done — data now syncs across all your devices instantly
@@ -57,6 +61,21 @@ A personal habit tracker with cross-device sync via Firebase, hosted on GitHub P
 - **Progress view** — overall %, today %, streaks, heatmap, per-habit rates
 - **Auto month reset** — new month = fresh grid, old months preserved in Firebase
 - **Real-time sync** — changes appear on all devices instantly
+
+---
+
+## Suggestions & Improvements
+
+- Tri-state checks: `✓` (done), `✕` (not done), `—` (skip). `✓` and `—` count as done for statistics.
+- Mobile improvements: larger tap targets, responsive table, and a sidebar drawer (already included).
+- Export/Import: CSV or JSON export for offline backups.
+- Reminders: optional push/notification reminders for important habits.
+- Weekly view: show week-based rollups alongside the monthly grid.
+- Templates & presets: save habit sets for different routines (e.g., travel, workweek).
+- Themes & accessibility: high-contrast and larger-text themes for accessibility.
+- Analytics: weekly/monthly trends, habit heatmap export, and habit correlations.
+
+If you'd like, I can add CSV export, reminders, or a weekly view next.
 
 ---
 

@@ -395,7 +395,6 @@ function renderGridBody() {
       const tid = habit.id;
       html += `<tr>`;
       html += `<td class="td-task">${habit.name}</td>`;
-
       let doneCount = 0;
       const dim2 = DAYS_IN_VIEW();
       const days2 = singleDayView
@@ -404,13 +403,27 @@ function renderGridBody() {
       days2.forEach((d) => {
         const checked = state.checks[d]?.[tid];
         const future = isFuture(d);
-        if (checked && !future) doneCount++;
+        if ((checked === "tick" || checked === "dash") && !future) doneCount++;
+        const icon =
+          checked === "tick"
+            ? "✓"
+            : checked === "cross"
+            ? "✕"
+            : checked === "dash"
+            ? "—"
+            : "";
+        const cls =
+          checked === "tick"
+            ? "tick"
+            : checked === "cross"
+            ? "cross"
+            : checked === "dash"
+            ? "dash"
+            : "";
         html += `<td>
-          <button class="chk ${checked ? "checked" : ""} ${
-          future ? "future" : ""
-        }"
+          <button class="chk ${cls} ${future ? "future" : ""}"
             onclick="toggleCheck(${d},'${tid}',this)"
-            title="${habit.name} — Day ${d}">${checked ? "✓" : ""}</button>
+            title="${habit.name} — Day ${d}">${icon}</button>
         </td>`;
       });
       const visibleDays =
@@ -457,7 +470,7 @@ function renderGridBody() {
   days3.forEach((d) => {
     const has = !!state.notes[d];
     const future = isFuture(d);
-    html += `<td><button data-day="${d}" class="notebtn ${
+    html += `<td class="td-notes"><button data-day="${d}" class="notebtn ${
       has ? "has-note" : ""
     } ${future ? "future" : ""}"
       title="${has ? "View/edit note" : "Add note"}">✎</button></td>`;
@@ -485,14 +498,31 @@ function renderGridBody() {
     .classList.toggle("single-day", singleDayView);
 }
 
+function isDoneValue(v) {
+  return v === "tick" || v === "dash";
+}
+
 // ── INTERACTIONS ──────────────────────────────────────────────────────────────
 
 function toggleCheck(day, habitId, btn) {
   if (!state.checks[day]) state.checks[day] = {};
   const cur = state.checks[day][habitId];
-  state.checks[day][habitId] = !cur;
-  btn.classList.toggle("checked", !cur);
-  btn.textContent = !cur ? "✓" : "";
+  // cycle: undefined -> tick -> cross -> dash -> undefined
+  let next;
+  if (!cur) next = "tick";
+  else if (cur === "tick") next = "cross";
+  else if (cur === "cross") next = "dash";
+  else next = undefined;
+  if (next) state.checks[day][habitId] = next;
+  else delete state.checks[day][habitId];
+
+  // update button appearance
+  btn.classList.remove("tick", "cross", "dash");
+  if (next) btn.classList.add(next);
+  const icon =
+    next === "tick" ? "✓" : next === "cross" ? "✕" : next === "dash" ? "—" : "";
+  btn.textContent = icon;
+
   renderStats();
   scheduleSave();
 }
@@ -713,7 +743,7 @@ function renderStats() {
 
   // Viewed day (shows counts for the currently selected day)
   const todayMap = state.checks[viewDay] || {};
-  const todayDone = habits.filter((h) => todayMap[h.id]).length;
+  const todayDone = habits.filter((h) => isDoneValue(todayMap[h.id])).length;
   document.getElementById("hToday").textContent = `${todayDone}/${n}`;
 
   // Success days
@@ -763,7 +793,7 @@ function renderProgressView() {
     const dm = state.checks[d] || {};
     habits.forEach((h) => {
       total++;
-      if (dm[h.id]) done++;
+      if (isDoneValue(dm[h.id])) done++;
     });
   }
   const overallPct = total ? Math.round((done / total) * 100) : 0;
@@ -772,7 +802,7 @@ function renderProgressView() {
 
   // Today
   const todayMap = state.checks[viewDay] || {};
-  const todayDone = habits.filter((h) => todayMap[h.id]).length;
+  const todayDone = habits.filter((h) => isDoneValue(todayMap[h.id])).length;
   const todayPct = n ? Math.round((todayDone / n) * 100) : 0;
   document.getElementById("pToday").textContent = todayPct + "%";
   document.getElementById("pTodayBar").style.width = todayPct + "%";
@@ -839,7 +869,7 @@ function renderProgressView() {
   habits.forEach((h) => {
     let hdone = 0;
     for (let d = 1; d <= visibleDays; d++) {
-      if (state.checks[d]?.[h.id]) hdone++;
+      if (isDoneValue(state.checks[d]?.[h.id])) hdone++;
     }
     const pct = visibleDays ? Math.round((hdone / visibleDays) * 100) : 0;
     barsHtml += `<div class="hbar-row">
@@ -859,18 +889,22 @@ function openDayModal(day) {
   ).textContent = `${MONTH_NAMES[viewMonth]} ${day}, ${viewYear}`;
 
   const dayMap = state.checks[day] || {};
-  const done = state.habits.filter((h) => dayMap[h.id]);
-  const pending = state.habits.filter((h) => !dayMap[h.id]);
+  const done = state.habits.filter((h) => isDoneValue(dayMap[h.id]));
+  const pending = state.habits.filter((h) => !isDoneValue(dayMap[h.id]));
   const v = state.successDays[day];
   const note = state.notes[day];
   const future = isFuture(day);
 
   let html = `<div class="day-modal-tasks">`;
   done.forEach((h) => {
-    html += `<div class="day-modal-task done">✓ ${h.name}</div>`;
+    const v = dayMap[h.id];
+    const icon = v === "dash" ? "—" : "✓";
+    html += `<div class="day-modal-task done">${icon} ${h.name}</div>`;
   });
   pending.forEach((h) => {
-    html += `<div class="day-modal-task pending">· ${h.name}</div>`;
+    const v = dayMap[h.id];
+    const icon = v === "cross" ? "✕" : "·";
+    html += `<div class="day-modal-task pending">${icon} ${h.name}</div>`;
   });
   html += `</div>`;
 
