@@ -351,9 +351,7 @@ function renderGridHead() {
       d === CURRENT_DAY;
     html += `<th class="${isToday ? "th-today" : ""}">${d}</th>`;
   });
-  // Notes column
-  html += `<th class="th-notes">Notes</th>`;
-  html += `<th class="th-pct">%</th></tr>`;
+  html += `</tr>`;
   document.getElementById("hthead").innerHTML = html;
 }
 
@@ -365,7 +363,7 @@ function renderGridBody() {
       ? [viewDay]
       : Array.from({ length: dim }, (_, i) => i + 1);
     document.getElementById("htbody").innerHTML = `<tr><td colspan="${
-      days.length + 3
+      days.length + 1
     }" style="padding:40px;text-align:center;color:var(--text-dim);font-size:13px">
         No habits yet — add some in the Habits tab.
       </td></tr>`;
@@ -388,7 +386,7 @@ function renderGridBody() {
       ? [viewDay]
       : Array.from({ length: dim }, (_, i) => i + 1);
     html += `<tr class="row-section">
-      <td class="section-name" colspan="${days.length + 3}">${cat}</td>
+      <td class="section-name" colspan="${days.length + 1}">${cat}</td>
     </tr>`;
 
     catHabits.forEach((habit) => {
@@ -401,7 +399,8 @@ function renderGridBody() {
         ? [viewDay]
         : Array.from({ length: dim2 }, (_, i) => i + 1);
       days2.forEach((d) => {
-        const checked = state.checks[d]?.[tid];
+        const raw = state.checks[d]?.[tid];
+        const checked = normalizeCheckValue(raw);
         const future = isFuture(d);
         if ((checked === "tick" || checked === "dash") && !future) doneCount++;
         const icon =
@@ -432,7 +431,7 @@ function renderGridBody() {
           : DAYS_IN_VIEW();
       const pct =
         visibleDays > 0 ? Math.round((doneCount / visibleDays) * 100) : 0;
-      html += `<td class="td-pct">${pct}%</td></tr>`;
+      html += `</tr>`;
     });
   });
 
@@ -442,7 +441,7 @@ function renderGridBody() {
     ? [viewDay]
     : Array.from({ length: dim3 }, (_, i) => i + 1);
   html += `<tr class="row-section"><td class="section-name" colspan="${
-    days3.length + 3
+    days3.length + 1
   }">Daily Verdict</td></tr>`;
   html += `<tr class="row-succ">
     <td class="td-task" style="font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--green)">✦ Successful Day</td>`;
@@ -464,7 +463,7 @@ function renderGridBody() {
   });
   html += `<td></td></tr>`;
 
-  // ── Notes row ──
+  // ── Notes row ── (per-day notes, shown beneath verdict)
   html += `<tr class="row-note">
     <td class="td-task" style="font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--purple)">✎ Notes</td>`;
   days3.forEach((d) => {
@@ -475,9 +474,7 @@ function renderGridBody() {
     } ${future ? "future" : ""}"
       title="${has ? "View/edit note" : "Add note"}">✎</button></td>`;
   });
-  // spacer for month-notes column
-  html += `<td></td>`;
-  html += `<td></td></tr>`;
+  html += `</tr>`;
 
   document.getElementById("htbody").innerHTML = html;
   // Attach explicit click handlers to note buttons (more reliable than inline onclick)
@@ -499,7 +496,13 @@ function renderGridBody() {
 }
 
 function isDoneValue(v) {
-  return v === "tick" || v === "dash";
+  return v === true || v === "tick" || v === "dash";
+}
+
+function normalizeCheckValue(v) {
+  if (v === true) return "tick";
+  if (v === false || v === null || v === undefined) return undefined;
+  return v; // 'tick'|'cross'|'dash' or other stored value
 }
 
 // ── INTERACTIONS ──────────────────────────────────────────────────────────────
@@ -897,13 +900,15 @@ function openDayModal(day) {
 
   let html = `<div class="day-modal-tasks">`;
   done.forEach((h) => {
-    const v = dayMap[h.id];
-    const icon = v === "dash" ? "—" : "✓";
+    const vraw = dayMap[h.id];
+    const vnorm = normalizeCheckValue(vraw);
+    const icon = vnorm === "dash" ? "—" : "✓";
     html += `<div class="day-modal-task done">${icon} ${h.name}</div>`;
   });
   pending.forEach((h) => {
-    const v = dayMap[h.id];
-    const icon = v === "cross" ? "✕" : "·";
+    const vraw = dayMap[h.id];
+    const vnorm = normalizeCheckValue(vraw);
+    const icon = vnorm === "cross" ? "✕" : "·";
     html += `<div class="day-modal-task pending">${icon} ${h.name}</div>`;
   });
   html += `</div>`;
@@ -1128,3 +1133,29 @@ Object.assign(window, {
 // ── START ─────────────────────────────────────────────────────────────────────
 
 boot();
+
+// Responsive: auto-switch to single-day view on small screens to avoid cramped grid
+let _prevSingleDayView = null;
+let _autoSingleActive = false;
+function updateResponsiveSingleDay() {
+  try {
+    const small = window.innerWidth <= 640;
+    if (small && !_autoSingleActive) {
+      _prevSingleDayView = singleDayView;
+      singleDayView = true;
+      _autoSingleActive = true;
+      render();
+    } else if (!small && _autoSingleActive) {
+      singleDayView = _prevSingleDayView === null ? true : _prevSingleDayView;
+      _autoSingleActive = false;
+      render();
+    }
+  } catch (e) {
+    console.warn("responsive switch failed", e);
+  }
+}
+window.addEventListener("resize", () => {
+  updateResponsiveSingleDay();
+});
+// run once on load
+updateResponsiveSingleDay();
