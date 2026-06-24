@@ -172,6 +172,7 @@ button, .chk, .daybtn, .notebtn, .habit-btn {
 
 /* ── CONTENT ── */
 .content{flex:1;overflow:hidden;display:flex;flex-direction:column}
+.mobile-menu-btn{display:none}
 .view{display:none;flex:1;overflow-y:auto;padding:20px 24px}
 .view.active{display:flex;flex-direction:column;gap:0}
 
@@ -294,62 +295,129 @@ button, .chk, .daybtn, .notebtn, .habit-btn {
 }
 
 /* ── PROGRESS VIEW ── */
-.progress-grid{
-  display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
-  gap:12px;margin-bottom:28px;
+.progress-heroes{
+  display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;
 }
-.pcard{
+.phero{
   background:var(--surface);border:1px solid var(--border);
-  border-radius:var(--radius);padding:20px;
+  border-radius:var(--radius);padding:20px 20px 16px;
 }
-.pcard.big{grid-column:span 2}
-@media(max-width:600px){.pcard.big{grid-column:span 1}}
-.pcard-label{font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px}
-.pcard-val{font-family:var(--mono);font-size:32px;font-weight:500;line-height:1}
-.pcard-sub{font-size:11px;color:var(--text-dim);margin-top:6px}
+.phero-label{
+  font-size:10px;color:var(--text-dim);text-transform:uppercase;
+  letter-spacing:.08em;margin-bottom:8px;
+}
+.phero-val{
+  font-family:var(--mono);font-size:42px;font-weight:500;
+  line-height:1;letter-spacing:-.02em;margin-bottom:4px;
+}
+.phero-sub{font-size:11px;color:var(--text-dim);margin-bottom:14px}
+.phero-bar{height:6px!important}
+
+.progress-pills{
+  display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:16px;
+}
+.ppill{
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--radius);padding:14px 10px 12px;text-align:center;
+}
+.ppill-val{
+  font-family:var(--mono);font-size:22px;font-weight:500;
+  line-height:1;margin-bottom:5px;
+}
+.ppill-label{
+  font-size:10px;color:var(--text-dim);text-transform:uppercase;
+  letter-spacing:.06em;margin-bottom:3px;
+}
+.ppill-sub{font-size:10px;color:var(--text-dim)}
+
+/* Day breakdown stacked bar */
+.day-breakdown{margin-bottom:24px}
+.dbd-bar{height:8px;border-radius:4px;overflow:hidden;display:flex;background:var(--border2)}
+.dbd-seg{height:100%;transition:width .5s ease;min-width:0}
+.dbd-seg.succ{background:var(--green)}
+.dbd-seg.fail{background:var(--red)}
+.dbd-seg.none{background:var(--surface3)}
+.dbd-legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:8px}
+.dbd-item{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-dim)}
+.dbd-dot{width:8px;height:8px;border-radius:2px;display:inline-block;flex-shrink:0}
+.dbd-dot.succ{background:var(--green)}
+.dbd-dot.fail{background:var(--red)}
+.dbd-dot.none{background:var(--surface3);border:1px solid var(--border2)}
+
+/* Legacy pcard kept for safety — no longer rendered */
+.progress-grid,.pcard,.pcard.big,.pcard-label,.pcard-val,.pcard-sub,.pbar-wrap,.pbar-fill{display:inherit}
 .pbar-wrap{height:3px;background:var(--border2);border-radius:2px;overflow:hidden;margin-top:12px}
 .pbar-fill{height:100%;border-radius:2px;transition:width .4s ease}
 .green-fill{background:linear-gradient(90deg,var(--green),#86efac)}
 .amber-fill{background:var(--amber)}
 
 .section-head{
-  font-family:var(--mono);font-size:10px;color:var(--text-dim);
-  text-transform:uppercase;letter-spacing:.12em;
-  padding:20px 0 12px;border-top:1px solid var(--border);margin-top:8px;
+  font-family:var(--mono);font-size:11px;color:var(--text-mid);
+  text-transform:uppercase;letter-spacing:.10em;
+  padding:24px 0 10px;border-top:1px solid var(--border);margin-top:4px;
+  display:flex;align-items:center;gap:6px;
+}
+.sh-icon{font-size:12px;opacity:.7;flex-shrink:0}
+.section-hint{
+  font-family:var(--sans);font-size:10px;color:var(--text-dim);
+  letter-spacing:normal;text-transform:none;margin-left:6px;font-weight:400;
 }
 
 /* heatmap */
-.heatmap{display:flex;gap:6px;flex-wrap:wrap;padding-bottom:12px}
+.heatmap{display:flex;gap:5px;flex-wrap:wrap;padding-bottom:12px}
 .hm-day{
-  width:32px;height:32px;border-radius:4px;border:1px solid var(--border2);
+  width:34px;height:34px;border-radius:5px;border:1px solid var(--border2);
   display:flex;align-items:center;justify-content:center;
   font-family:var(--mono);font-size:9px;color:var(--text-dim);
   cursor:pointer;transition:all .12s;position:relative;
 }
-.hm-day:hover{border-color:var(--blue)}
+.hm-day:hover{border-color:var(--blue);background:var(--blue-bg)}
 .hm-day.succ{background:var(--green-bg);border-color:var(--green-border);color:var(--green)}
 .hm-day.fail{background:var(--red-bg);border-color:rgba(255,95,87,.25);color:var(--red)}
-.hm-day.today-hm{box-shadow:0 0 0 1px var(--blue);border-color:var(--blue)}
-.hm-day.future-hm{opacity:.25;cursor:default}
+.hm-day.today-hm{box-shadow:0 0 0 2px var(--blue);border-color:var(--blue)}
+.hm-day.future-hm{opacity:.2;cursor:default;pointer-events:none}
 .hm-day.has-note::after{
   content:'';position:absolute;top:3px;right:3px;
   width:4px;height:4px;border-radius:50%;background:var(--purple);
 }
-.heatmap-legend{display:flex;gap:16px;flex-wrap:wrap;padding-bottom:20px}
+.hm-day.has-cal::before{
+  content:'';position:absolute;bottom:3px;left:50%;transform:translateX(-50%);
+  width:3px;height:3px;border-radius:50%;background:var(--amber);
+}
+.heatmap-legend{display:flex;gap:14px;flex-wrap:wrap;padding-bottom:20px}
 .hl-item{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-dim)}
 .hl-dot{width:8px;height:8px;border-radius:2px;border:1px solid var(--border2)}
 .hl-dot.succ{background:var(--green-bg);border-color:var(--green-border)}
 .hl-dot.fail{background:var(--red-bg);border-color:rgba(255,95,87,.25)}
 .hl-dot.none{background:var(--surface)}
-.hl-dot.future{opacity:.25}
+.hl-dot.future{opacity:.2}
+.hl-dot.cal{background:var(--amber);border-color:rgba(245,166,35,.4);border-radius:50%}
 
 /* habit bars */
 .habit-bars{display:flex;flex-direction:column;gap:8px;padding-bottom:40px}
 .hbar-row{display:flex;align-items:center;gap:10px}
-.hbar-name{font-size:12px;color:var(--text-mid);width:180px;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hbar-name{
+  font-size:12px;color:var(--text-mid);flex:1;min-width:0;
+  display:flex;align-items:center;gap:5px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.hbar-cat{
+  font-family:var(--mono);font-size:8px;color:var(--text-dim);
+  background:var(--surface3);border:1px solid var(--border2);
+  border-radius:8px;padding:1px 5px;flex-shrink:0;
+}
 .hbar-track{flex:1;height:6px;background:var(--border2);border-radius:3px;overflow:hidden}
-.hbar-fill{height:100%;background:var(--green);border-radius:3px;transition:width .4s ease}
-.hbar-pct{font-family:var(--mono);font-size:10px;color:var(--text-dim);width:30px;text-align:right;flex-shrink:0}
+.hbar-fill{height:100%;border-radius:3px;transition:width .5s ease}
+.hbar-meta{display:flex;flex-direction:column;align-items:flex-end;width:38px;flex-shrink:0;gap:1px}
+.hbar-pct{font-family:var(--mono);font-size:11px;font-weight:500}
+.hbar-count{font-family:var(--mono);font-size:9px;color:var(--text-dim)}
+.hbar-cat-head{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:14px 0 6px;border-top:1px solid var(--border2);margin-top:6px;
+}
+.hbar-cat-head:first-child{margin-top:0;padding-top:4px;border-top:none}
+.hbar-cat-name{font-family:var(--mono);font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.10em}
+.hbar-cat-avg{font-family:var(--mono);font-size:10px;font-weight:500}
 
 /* ── HABITS VIEW ── */
 .habits-list{display:flex;flex-direction:column;gap:8px;padding-bottom:40px}
@@ -482,7 +550,7 @@ button, .chk, .daybtn, .notebtn, .habit-btn {
 .cal-goal-input{
   width:72px;padding:4px 8px;font-family:var(--mono);font-size:13px;
   border-radius:var(--radius-sm);text-align:right;
-  -moz-appearance:textfield;
+  appearance:textfield;-moz-appearance:textfield;
 }
 .cal-goal-input::-webkit-outer-spin-button,
 .cal-goal-input::-webkit-inner-spin-button{-webkit-appearance:none}
@@ -496,7 +564,7 @@ button, .chk, .daybtn, .notebtn, .habit-btn {
 .cal-add-form .form-input{flex:1;min-width:120px}
 .cal-num-input{
   flex:0 0 90px !important;max-width:90px;text-align:right;
-  -moz-appearance:textfield;
+  appearance:textfield;-moz-appearance:textfield;
 }
 .cal-num-input::-webkit-outer-spin-button,
 .cal-num-input::-webkit-inner-spin-button{-webkit-appearance:none}
@@ -638,15 +706,13 @@ button, .chk, .daybtn, .notebtn, .habit-btn {
   /* Backdrop shown when mobile sidebar is open */
   .mobile-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:340}
   .mobile-backdrop.hidden{display:none}
-  /* Mobile menu button visible in header */
-  .mobile-menu-btn{display:none}
+  /* Mobile menu button */
   .mobile-menu-btn{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:6px;border:1px solid var(--border2);color:var(--text);background:transparent;margin-right:8px}
   /* Tweak content spacing for small screens */
   .view{padding:16px 14px}
   .view-header{flex-direction:column;align-items:flex-start}
   .header-stats{align-self:flex-end;gap:12px}
   .hstat-val{font-size:15px}
-  .pcard.big{grid-column:span 1}
 
   /* Disable horizontal scrolling on small screens and hide unused trailing columns (Notes and %)
      The last two columns in the grid (Notes and percentage) are hidden to avoid horizontal overflow.
@@ -666,4 +732,10 @@ button, .chk, .daybtn, .notebtn, .habit-btn {
   .htable.single-day td:nth-child(2){display:flex;justify-content:flex-end;align-items:center;padding-right:12px !important;width:64px !important}
   .htable.single-day th.th-task, .htable.single-day td.td-task{width:auto;min-width:0;padding-left:8px}
   .chk{margin:0;display:inline-block !important}
+
+  /* Progress view mobile */
+  .progress-heroes{grid-template-columns:1fr}
+  .phero-val{font-size:32px}
+  .progress-pills{grid-template-columns:repeat(3,1fr)}
+  .hm-day{width:38px;height:38px}
 }

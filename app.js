@@ -1403,6 +1403,8 @@ function renderProgressView() {
   const todayPct = n ? Math.round((todayDone / n) * 100) : 0;
   document.getElementById("pToday").textContent = todayPct + "%";
   document.getElementById("pTodayBar").style.width = todayPct + "%";
+  const pTodaySub = document.getElementById("pTodaySub");
+  if (pTodaySub) pTodaySub.textContent = `${todayDone} of ${n} habits done`;
 
   // Success / fail / unmarked
   const succDays = Object.values(state.successDays).filter(
@@ -1413,11 +1415,67 @@ function renderProgressView() {
   ).length;
   const unmarked = visibleDays - succDays - failDays;
   document.getElementById("pSuccDays").textContent = succDays;
-  document.getElementById(
-    "pSuccSub"
-  ).textContent = `of ${visibleDays} days passed`;
+  document.getElementById("pSuccSub").textContent = `of ${visibleDays} days`;
   document.getElementById("pFailDays").textContent = failDays;
-  document.getElementById("pUnmarked").textContent = Math.max(0, unmarked);
+  const pUnmarked = document.getElementById("pUnmarked");
+  if (pUnmarked) pUnmarked.textContent = Math.max(0, unmarked);
+
+  // Day breakdown stacked bar
+  const dbdSuccEl = document.getElementById("dbdSucc");
+  if (dbdSuccEl) {
+    const succPct = visibleDays ? (succDays / visibleDays) * 100 : 0;
+    const failPct = visibleDays ? (failDays / visibleDays) * 100 : 0;
+    const unPct = Math.max(0, 100 - succPct - failPct);
+    dbdSuccEl.style.width = succPct + "%";
+    document.getElementById("dbdFail").style.width = failPct + "%";
+    document.getElementById("dbdUnmarked").style.width = unPct + "%";
+    document.getElementById(
+      "dbdSuccLabel"
+    ).textContent = `${succDays} successful`;
+    document.getElementById("dbdFailLabel").textContent = `${failDays} failed`;
+    document.getElementById("dbdUnmarkedLabel").textContent = `${Math.max(
+      0,
+      unmarked
+    )} unmarked`;
+  }
+
+  // Calorie pill
+  const calEntries = state.calories[viewDay] || [];
+  const calTotal = calEntries.reduce((s, e) => s + (e.cal || 0), 0);
+  const calGoal = state.calorieGoal || 2000;
+  const pCalTodayEl = document.getElementById("pCalToday");
+  const pCalSubEl = document.getElementById("pCalSub");
+  if (pCalTodayEl) {
+    pCalTodayEl.textContent = calTotal > 0 ? String(calTotal) : "\u2014";
+    const ratio = calTotal / calGoal;
+    pCalTodayEl.className =
+      "ppill-val " +
+      (calTotal === 0
+        ? "dim"
+        : ratio > 1
+        ? "red"
+        : ratio >= 0.8
+        ? "amber"
+        : "green");
+  }
+  if (pCalSubEl) pCalSubEl.textContent = `of ${calGoal} kcal`;
+
+  // Monthly calorie average
+  let calDayCount = 0,
+    calMonthTotal = 0;
+  for (let d = 1; d <= visibleDays; d++) {
+    const dayCalSum = (state.calories[d] || []).reduce(
+      (s, e) => s + (e.cal || 0),
+      0
+    );
+    if (dayCalSum > 0) {
+      calDayCount++;
+      calMonthTotal += dayCalSum;
+    }
+  }
+  const calAvg = calDayCount > 0 ? Math.round(calMonthTotal / calDayCount) : 0;
+  const pCalAvgEl = document.getElementById("pCalAvg");
+  if (pCalAvgEl) pCalAvgEl.textContent = calAvg > 0 ? String(calAvg) : "\u2014";
 
   // Streak
   let streak = 0,
@@ -1445,6 +1503,11 @@ function renderProgressView() {
     const v = state.successDays[d];
     const future = isFuture(d);
     const hasNote = !!state.notes[d];
+    const dayCalSum = (state.calories[d] || []).reduce(
+      (s, e) => s + (e.cal || 0),
+      0
+    );
+    const hasCal = dayCalSum > 0;
     let cls = "";
     if (future) cls = "future-hm";
     else if (v === "success") cls = "succ";
@@ -1457,23 +1520,74 @@ function renderProgressView() {
       cls += " today-hm";
     if (d === viewDay) cls += " today-hm";
     if (hasNote) cls += " has-note";
-    hmHtml += `<div class="hm-day ${cls}" onclick="openDayModal(${d})" title="Day ${d}">${d}</div>`;
+    if (hasCal) cls += " has-cal";
+    const tooltip = future
+      ? `Day ${d}`
+      : `Day ${d} \u00b7 ${
+          v === "success"
+            ? "\u2713 Successful"
+            : v === "fail"
+            ? "\u2717 Failed"
+            : "Unmarked"
+        }${hasCal ? ` \u00b7 ${dayCalSum}\u202fkcal` : ""}`;
+    hmHtml += `<div class="hm-day ${cls}" onclick="openDayModal(${d})" title="${tooltip}">${d}</div>`;
   }
   document.getElementById("heatmap").innerHTML = hmHtml;
 
-  // Per-habit bars
-  let barsHtml = "";
-  habits.forEach((h) => {
+  // Per-habit bars — sorted ascending (weakest first) so user sees what needs work
+  const habitStats = habits.map((h) => {
     let hdone = 0;
     for (let d = 1; d <= visibleDays; d++) {
       if (isDoneValue(state.checks[d]?.[h.id])) hdone++;
     }
     const pct = visibleDays ? Math.round((hdone / visibleDays) * 100) : 0;
-    barsHtml += `<div class="hbar-row">
-      <div class="hbar-name" title="${h.name}">${h.name}</div>
-      <div class="hbar-track"><div class="hbar-fill" style="width:${pct}%"></div></div>
-      <div class="hbar-pct">${pct}%</div>
-    </div>`;
+    return { h, hdone, pct };
+  });
+  habitStats.sort((a, b) => a.pct - b.pct);
+
+  const headEl = document.getElementById("habitBarsHead");
+  if (headEl) {
+    const allStrong = habitStats.every((s) => s.pct >= 80);
+    headEl.innerHTML = allStrong
+      ? `<span class="sh-icon">\u2736</span> Habit Performance <span class="section-hint">\u2714 all on track</span>`
+      : `<span class="sh-icon">\u2736</span> Habit Performance <span class="section-hint">weakest first, by category</span>`;
+  }
+
+  // Group by category, each group sorted ascending by pct, categories sorted by avg pct
+  const catMap = {};
+  habitStats.forEach((s) => {
+    const cat = s.h.cat || "";
+    if (!catMap[cat]) catMap[cat] = [];
+    catMap[cat].push(s);
+  });
+  const catGroups = Object.entries(catMap).map(([cat, stats]) => ({
+    cat,
+    stats: stats.sort((a, b) => a.pct - b.pct),
+    avg: Math.round(stats.reduce((sum, x) => sum + x.pct, 0) / stats.length),
+  }));
+  catGroups.sort((a, b) => a.avg - b.avg);
+  const showCatHeads =
+    catGroups.length > 1 || (catGroups[0] && catGroups[0].cat !== "");
+
+  let barsHtml = "";
+  catGroups.forEach(({ cat, stats, avg }) => {
+    if (showCatHeads && cat) {
+      const cColor =
+        avg < 50 ? "var(--red)" : avg < 80 ? "var(--amber)" : "var(--green)";
+      barsHtml += `<div class="hbar-cat-head"><span class="hbar-cat-name">${cat}</span><span class="hbar-cat-avg" style="color:${cColor}">${avg}% avg</span></div>`;
+    }
+    stats.forEach(({ h, hdone, pct }) => {
+      const color =
+        pct < 50 ? "var(--red)" : pct < 80 ? "var(--amber)" : "var(--green)";
+      barsHtml += `<div class="hbar-row">
+        <div class="hbar-name" title="${h.name}">${h.name}</div>
+        <div class="hbar-track"><div class="hbar-fill" style="width:${pct}%;background:${color}"></div></div>
+        <div class="hbar-meta">
+          <span class="hbar-pct" style="color:${color}">${pct}%</span>
+          <span class="hbar-count">${hdone}/${visibleDays}d</span>
+        </div>
+      </div>`;
+    });
   });
   document.getElementById("habitBars").innerHTML = barsHtml;
 }

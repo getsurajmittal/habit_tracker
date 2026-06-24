@@ -149,51 +149,78 @@
         </div>
       </div>
 
-      <div class="progress-grid">
-        <div class="pcard big">
-          <div class="pcard-label">Overall Completion</div>
-          <div class="pcard-val" id="pOverall">0%</div>
-          <div class="pbar-wrap"><div class="pbar-fill green-fill" id="pOverallBar"></div></div>
+      <!-- Hero bars: two key metrics -->
+      <div class="progress-heroes">
+        <div class="phero">
+          <div class="phero-label">Today</div>
+          <div class="phero-val amber" id="pToday">0%</div>
+          <div class="phero-sub" id="pTodaySub">0 of 0 habits done</div>
+          <div class="pbar-wrap phero-bar"><div class="pbar-fill amber-fill" id="pTodayBar"></div></div>
         </div>
-        <div class="pcard big">
-          <div class="pcard-label">Today's Completion</div>
-          <div class="pcard-val" id="pToday">0%</div>
-          <div class="pbar-wrap"><div class="pbar-fill amber-fill" id="pTodayBar"></div></div>
+        <div class="phero">
+          <div class="phero-label">Month Overall</div>
+          <div class="phero-val green" id="pOverall">0%</div>
+          <div class="phero-sub">all habits &amp; days so far</div>
+          <div class="pbar-wrap phero-bar"><div class="pbar-fill green-fill" id="pOverallBar"></div></div>
         </div>
-        <div class="pcard">
-          <div class="pcard-label">Current Streak</div>
-          <div class="pcard-val green" id="pStreak">0</div>
-          <div class="pcard-sub" id="pBestStreak">Best: 0 days</div>
+      </div>
+
+      <!-- Stat pills -->
+      <div class="progress-pills">
+        <div class="ppill">
+          <div class="ppill-val green" id="pStreak">0</div>
+          <div class="ppill-label">Streak</div>
+          <div class="ppill-sub" id="pBestStreak">Best: 0</div>
         </div>
-        <div class="pcard">
-          <div class="pcard-label">Successful Days</div>
-          <div class="pcard-val amber" id="pSuccDays">0</div>
-          <div class="pcard-sub" id="pSuccSub">of 0 days passed</div>
+        <div class="ppill">
+          <div class="ppill-val green" id="pSuccDays">0</div>
+          <div class="ppill-label">Successful</div>
+          <div class="ppill-sub" id="pSuccSub">of 0 days</div>
         </div>
-        <div class="pcard">
-          <div class="pcard-label">Failed Days</div>
-          <div class="pcard-val red" id="pFailDays">0</div>
-          <div class="pcard-sub" id="pFailSub">marked as failed</div>
+        <div class="ppill">
+          <div class="ppill-val red" id="pFailDays">0</div>
+          <div class="ppill-label">Failed</div>
+          <div class="ppill-sub" id="pFailSub">days marked</div>
         </div>
-        <div class="pcard">
-          <div class="pcard-label">Unmarked Days</div>
-          <div class="pcard-val dim" id="pUnmarked">0</div>
-          <div class="pcard-sub">need review</div>
+        <div class="ppill">
+          <div class="ppill-val" id="pCalToday">—</div>
+          <div class="ppill-label">kcal today</div>
+          <div class="ppill-sub" id="pCalSub">— goal</div>
+        </div>
+        <div class="ppill">
+          <div class="ppill-val dim" id="pCalAvg">—</div>
+          <div class="ppill-label">daily avg</div>
+          <div class="ppill-sub">this month</div>
+        </div>
+      </div>
+
+      <!-- Day breakdown bar -->
+      <div class="day-breakdown">
+        <div class="dbd-bar">
+          <div class="dbd-seg succ" id="dbdSucc" style="width:0%"></div>
+          <div class="dbd-seg fail" id="dbdFail" style="width:0%"></div>
+          <div class="dbd-seg none" id="dbdUnmarked" style="width:100%"></div>
+        </div>
+        <div class="dbd-legend">
+          <span class="dbd-item"><span class="dbd-dot succ"></span><span id="dbdSuccLabel">0 successful</span></span>
+          <span class="dbd-item"><span class="dbd-dot fail"></span><span id="dbdFailLabel">0 failed</span></span>
+          <span class="dbd-item"><span class="dbd-dot none"></span><span id="dbdUnmarkedLabel">0 unmarked</span></span>
         </div>
       </div>
 
       <!-- Month heatmap -->
-      <div class="section-head">Month Overview</div>
+      <div class="section-head"><span class="sh-icon">◷</span> Month at a Glance <span class="section-hint">tap a day for details</span></div>
       <div class="heatmap" id="heatmap"></div>
       <div class="heatmap-legend">
         <span class="hl-item"><span class="hl-dot succ"></span> Successful</span>
         <span class="hl-item"><span class="hl-dot fail"></span> Failed</span>
         <span class="hl-item"><span class="hl-dot none"></span> Unmarked</span>
-        <span class="hl-item"><span class="hl-dot future"></span> Future</span>
+        <span class="hl-item"><span class="hl-dot future"></span> Upcoming</span>
+        <span class="hl-item"><span class="hl-dot cal"></span> Calories logged</span>
       </div>
 
-      <!-- Per-habit completion -->
-      <div class="section-head">Habit Completion Rates</div>
+      <!-- Per-habit bars -->
+      <div class="section-head" id="habitBarsHead">Habit Performance</div>
       <div class="habit-bars" id="habitBars"></div>
     </div>
 
