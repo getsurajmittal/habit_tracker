@@ -12,6 +12,8 @@ let state = {
   checks: {}, // {day: {habitId: bool}}
   successDays: {}, // {day: 'success'|'fail'}
   notes: {}, // {day: string}
+  calories: {}, // {day: [{id, food, cal, time}]}
+  calorieGoal: 2000, // daily kcal target
 };
 
 // Single month-level note (stored in month doc under `monthNote`)
@@ -139,6 +141,7 @@ async function initFirebase(config) {
   // Show app, hide setup
   document.getElementById("setupScreen").classList.add("hidden");
   document.getElementById("app").classList.remove("hidden");
+  updateAIStatus();
 
   // Subscribe to the currently viewed month (defaults to current month)
   subscribeToMonth(viewYear, viewMonth);
@@ -176,9 +179,15 @@ async function initFirebase(config) {
   );
   const globalRef = doc(db, "tracker", "global");
   const globalSnap = await getDoc2(globalRef);
-  if (globalSnap.exists()) state.globalNote = globalSnap.data().monthNote || "";
+  if (globalSnap.exists()) {
+    state.globalNote = globalSnap.data().monthNote || "";
+    state.calorieGoal = globalSnap.data().calorieGoal || 2000;
+  }
   onSnap2(globalRef, (snap) => {
-    if (snap.exists()) state.globalNote = snap.data().monthNote || "";
+    if (snap.exists()) {
+      state.globalNote = snap.data().monthNote || "";
+      state.calorieGoal = snap.data().calorieGoal || 2000;
+    }
     render();
   });
 
@@ -202,10 +211,12 @@ async function subscribeToMonth(y, m) {
         state.checks = data.checks || {};
         state.successDays = data.successDays || {};
         state.notes = data.notes || {};
+        state.calories = data.calories || {};
       } else {
         state.checks = {};
         state.successDays = {};
         state.notes = {};
+        state.calories = {};
       }
       render();
       setSyncStatus("synced");
@@ -264,6 +275,7 @@ async function flushSave() {
     checks: state.checks,
     successDays: state.successDays,
     notes: state.notes,
+    calories: state.calories,
     year: viewYear,
     month: viewMonth + 1,
     updatedAt: Date.now(),
@@ -276,7 +288,10 @@ async function saveGlobalNote() {
     "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js"
   );
   const gRef = doc(db, "tracker", "global");
-  await setDoc(gRef, { monthNote: state.globalNote });
+  await setDoc(gRef, {
+    monthNote: state.globalNote,
+    calorieGoal: state.calorieGoal,
+  });
 }
 
 async function saveHabits() {
@@ -287,6 +302,509 @@ async function saveHabits() {
   await setDoc(doc(db, "tracker", "habits"), { list: state.habits });
 }
 
+// ── GEMINI AI ─────────────────────────────────────────────────────────────────
+
+const GEMINI_KEY_KEY = "tracker_gemini_key";
+const GEMINI_MODEL_KEY = "tracker_gemini_model";
+
+// Queries the user's own model list and picks the best available flash model.
+// Result is cached in localStorage so subsequent calls are instant.
+async function _resolveGeminiModel(key) {
+  const cached = localStorage.getItem(GEMINI_MODEL_KEY);
+  if (cached) return cached;
+
+  try {
+    const resp = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(
+        key
+      )}&pageSize=100`
+    );
+    if (!resp.ok) return "gemini-2.0-flash";
+    const data = await resp.json();
+
+    const candidates = (data.models || [])
+      .filter(
+        (m) =>
+          m.supportedGenerationMethods?.includes("generateContent") &&
+          m.name.includes("flash") &&
+          !m.name.includes("thinking") &&
+          !m.name.includes("-8b")
+      )
+      .map((m) => m.name.replace("models/", ""));
+
+    // Sort descending — highest version string first
+    candidates.sort((a, b) =>
+      b.localeCompare(a, undefined, { numeric: true, sensitivity: "base" })
+    );
+
+    const best = candidates[0] || "gemini-2.0-flash";
+    localStorage.setItem(GEMINI_MODEL_KEY, best);
+    console.log("[AI] Using model:", best);
+    return best;
+  } catch {
+    return "gemini-2.0-flash";
+  }
+}
+
+async function callGemini(textPrompt, imageBase64 = null, mimeType = null) {
+  const key = localStorage.getItem(GEMINI_KEY_KEY);
+  if (!key) throw new Error("No Gemini API key configured.");
+
+  const model = await _resolveGeminiModel(key);
+
+  const parts = [];
+  if (imageBase64) {
+    parts.push({
+      inlineData: { data: imageBase64, mimeType: mimeType || "image/jpeg" },
+    });
+  }
+  parts.push({ text: textPrompt });
+
+  const resp = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(
+      key
+    )}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts }],
+        generationConfig: { temperature: 0.2, maxOutputTokens: 600 },
+      }),
+    }
+  );
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.error?.message || `Gemini API error ${resp.status}`);
+  }
+  const data = await resp.json();
+  return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+}
+
+function parseGeminiJSON(text) {
+  // Strip markdown code fences Gemini sometimes wraps around JSON
+  return JSON.parse(
+    text
+      .replace(/```json?\n?/g, "")
+      .replace(/```\n?/g, "")
+      .trim()
+  );
+}
+
+async function estimateCaloriesFromText(food) {
+  const prompt = `You are a nutrition expert with deep knowledge of Indian cuisine and global foods.
+Estimate calories for the described food item using typical Indian household portions.
+Reference sizes: 1 chapati ~80 kcal, 1 bowl dal ~150 kcal, 1 tsp chyawanprash ~40 kcal,
+1 cup cooked rice ~200 kcal, 1 glass milk ~150 kcal, 1 banana ~90 kcal, 1 egg ~78 kcal.
+Return ONLY valid JSON, no markdown, no extra text:
+{"calories": 250, "description": "e.g. 1 medium chapati (~30g)"}
+
+Food: "${food}"`;
+  const raw = await callGemini(prompt);
+  return parseGeminiJSON(raw);
+}
+
+async function estimateCaloriesFromPhoto(base64, mimeType) {
+  const prompt = `You are a nutrition expert specializing in Indian cuisine and global foods.
+Analyze this food photo. Identify all distinct food items visible and estimate calories for each separately.
+Use typical Indian household portions. Be specific about serving size in the description.
+Return ONLY a valid JSON array, no markdown, no extra text:
+[{"food": "Rice", "calories": 250, "description": "~1 cup cooked basmati rice"}, ...]
+If no food is identifiable in the image, return: []`;
+  const raw = await callGemini(prompt, base64, mimeType);
+  return parseGeminiJSON(raw);
+}
+
+// ── AI TEXT SUGGESTION ────────────────────────────────────────────────────────
+
+let aiSuggestionData = null;
+
+// Clears the suggestion chip whenever the user edits the food field.
+// AI is only triggered manually via triggerAIFromFoodInput().
+function onFoodInputChange() {
+  _hideAISuggestion();
+}
+
+// Called when user clicks ⚡ button or presses Enter in the food field
+function triggerAIFromFoodInput() {
+  // If suggestion already showing, accept it
+  if (aiSuggestionData) {
+    acceptAISuggestion();
+    return;
+  }
+  const food = (document.getElementById("calFoodInput")?.value || "").trim();
+  if (!food || food.length < 2) return;
+  if (!localStorage.getItem(GEMINI_KEY_KEY)) {
+    openAISetup();
+    return;
+  }
+  _fetchAISuggestion(food);
+}
+
+async function _fetchAISuggestion(food) {
+  _setAILoading(true);
+  try {
+    const result = await estimateCaloriesFromText(food);
+    if (result && result.calories) {
+      aiSuggestionData = result;
+      _setAILoading(false);
+      _showAIChip(result);
+    } else {
+      _setAILoading(false);
+      _showAIError("No estimate returned — try rephrasing");
+    }
+  } catch (e) {
+    _setAILoading(false);
+    _showAIError(e.message || "AI request failed");
+    console.warn("AI suggestion failed:", e);
+  }
+}
+
+function _setAILoading(show) {
+  const wrap = document.getElementById("aiSuggestion");
+  const loading = document.getElementById("aiLoading");
+  const chip = document.getElementById("aiChip");
+  if (!wrap || !loading || !chip) return;
+  if (show) {
+    wrap.classList.remove("hidden");
+    loading.classList.remove("hidden");
+    chip.classList.add("hidden");
+  } else {
+    loading.classList.add("hidden");
+    if (chip.classList.contains("hidden")) wrap.classList.add("hidden");
+  }
+}
+
+function _showAIChip(result) {
+  const wrap = document.getElementById("aiSuggestion");
+  const chip = document.getElementById("aiChip");
+  const text = document.getElementById("aiChipText");
+  if (!wrap || !chip || !text) return;
+  // Reset any error styling from a previous error
+  text.style.color = "";
+  chip.style.borderColor = "";
+  text.textContent = `~${result.calories} kcal \u00b7 ${result.description}`;
+  wrap.classList.remove("hidden");
+  chip.classList.remove("hidden");
+}
+
+function _showAIError(msg) {
+  const wrap = document.getElementById("aiSuggestion");
+  const chip = document.getElementById("aiChip");
+  const text = document.getElementById("aiChipText");
+  if (!wrap || !chip || !text) return;
+  text.style.color = "var(--red)";
+  chip.style.borderColor = "rgba(255,95,87,.35)";
+  text.textContent = "\u26a0 " + msg;
+  wrap.classList.remove("hidden");
+  chip.classList.remove("hidden");
+}
+
+function _hideAISuggestion() {
+  const wrap = document.getElementById("aiSuggestion");
+  const loading = document.getElementById("aiLoading");
+  const chip = document.getElementById("aiChip");
+  if (wrap) wrap.classList.add("hidden");
+  if (loading) loading.classList.add("hidden");
+  if (chip) chip.classList.add("hidden");
+}
+
+function acceptAISuggestion() {
+  if (!aiSuggestionData) return;
+  document.getElementById("calAmtInput").value = aiSuggestionData.calories;
+  _hideAISuggestion();
+  document.getElementById("calAmtInput").focus();
+}
+
+function dismissAISuggestion() {
+  aiSuggestionData = null;
+  _hideAISuggestion();
+}
+
+// ── PHOTO UPLOAD ──────────────────────────────────────────────────────────────
+
+let _pendingPhotoEntries = [];
+
+function triggerPhotoUpload() {
+  if (!localStorage.getItem(GEMINI_KEY_KEY)) {
+    openAISetup();
+    return;
+  }
+  document.getElementById("calPhotoInput").click();
+}
+
+async function handlePhotoUpload(event) {
+  const file = event.target.files?.[0];
+  event.target.value = ""; // reset so same file can be re-selected
+  if (!file) return;
+
+  _setPhotoLoading(true);
+  try {
+    const { base64, mimeType } = await _fileToBase64(file);
+    const results = await estimateCaloriesFromPhoto(base64, mimeType);
+    if (!Array.isArray(results) || !results.length) {
+      alert(
+        "Couldn't identify food in the photo. Try better lighting or a closer angle."
+      );
+      return;
+    }
+    _showPhotoResults(results);
+  } catch (e) {
+    console.error("Photo analysis failed:", e);
+    alert("Photo analysis failed: " + e.message);
+  } finally {
+    _setPhotoLoading(false);
+  }
+}
+
+function _fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const [, base64] = reader.result.split(",");
+      resolve({ base64, mimeType: file.type });
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function _setPhotoLoading(loading) {
+  const btn = document.querySelector(".cal-photo-btn");
+  if (!btn) return;
+  btn.textContent = loading ? "\u231b" : "\uD83D\uDCF7";
+  btn.disabled = loading;
+}
+
+function _showPhotoResults(results) {
+  _pendingPhotoEntries = results.map((r) => ({ ...r, selected: true }));
+
+  let html = `<p class="photo-result-hint">AI identified these items from your photo. Adjust calories or deselect anything incorrect before adding.</p>
+  <div class="photo-results-list">`;
+
+  results.forEach((item, i) => {
+    html += `<div class="photo-result-item">
+      <label class="photo-result-check">
+        <input type="checkbox" checked onchange="togglePhotoEntry(${i},this.checked)">
+        <div class="photo-result-info">
+          <div class="photo-result-food">${item.food}</div>
+          <div class="photo-result-desc">${item.description}</div>
+        </div>
+      </label>
+      <div class="photo-result-right">
+        <input class="form-input cal-num-input" type="number" value="${item.calories}"
+          min="1" max="9999" onchange="updatePhotoEntryCalories(${i},this.value)">
+        <span class="cal-goal-label">kcal</span>
+      </div>
+    </div>`;
+  });
+
+  html += `</div>`;
+  document.getElementById("photoResultContent").innerHTML = html;
+  openModal("photoResultModal");
+}
+
+function togglePhotoEntry(index, selected) {
+  if (_pendingPhotoEntries[index])
+    _pendingPhotoEntries[index].selected = selected;
+}
+
+function updatePhotoEntryCalories(index, val) {
+  if (_pendingPhotoEntries[index])
+    _pendingPhotoEntries[index].calories = parseInt(val, 10) || 0;
+}
+
+function addPhotoEntries() {
+  const toAdd = _pendingPhotoEntries.filter(
+    (e) => e.selected && e.calories > 0
+  );
+  if (!toAdd.length) {
+    closeModal("photoResultModal");
+    return;
+  }
+
+  if (!state.calories[viewDay]) state.calories[viewDay] = [];
+  const now = new Date();
+  const time = `${String(now.getHours()).padStart(2, "0")}:${String(
+    now.getMinutes()
+  ).padStart(2, "0")}`;
+
+  toAdd.forEach((entry) => {
+    state.calories[viewDay].push({
+      id: uid(),
+      food: entry.food,
+      cal: entry.calories,
+      time,
+    });
+  });
+
+  _pendingPhotoEntries = [];
+  closeModal("photoResultModal");
+  renderCalorieView();
+  scheduleSave();
+}
+
+// ── AI SETUP ──────────────────────────────────────────────────────────────────
+
+function openAISetup() {
+  const existing = localStorage.getItem(GEMINI_KEY_KEY) || "";
+  document.getElementById("geminiKeyInput").value = existing;
+  document.getElementById("geminiSetupError").classList.add("hidden");
+  openModal("aiSetupModal");
+  updateAIStatus(); // refresh model display in modal
+}
+
+function saveGeminiKey() {
+  const key = document.getElementById("geminiKeyInput").value.trim();
+  const errEl = document.getElementById("geminiSetupError");
+  if (!key) {
+    showError(errEl, "Please enter your Gemini API key.");
+    return;
+  }
+  localStorage.setItem(GEMINI_KEY_KEY, key);
+  closeModal("aiSetupModal");
+  updateAIStatus();
+}
+
+function removeGeminiKey() {
+  localStorage.removeItem(GEMINI_KEY_KEY);
+  localStorage.removeItem(GEMINI_MODEL_KEY);
+  const inp = document.getElementById("geminiKeyInput");
+  if (inp) inp.value = "";
+  updateAIStatus();
+  closeModal("aiSetupModal");
+}
+
+function updateAIStatus() {
+  const hasKey = !!localStorage.getItem(GEMINI_KEY_KEY);
+  const model = localStorage.getItem(GEMINI_MODEL_KEY);
+  // Show short model label e.g. "2.0-flash" from "gemini-2.0-flash"
+  const label = model
+    ? model
+        .replace(/^gemini-/, "")
+        .split("-")
+        .slice(0, 2)
+        .join("-")
+    : "auto";
+  document.querySelectorAll("#aiSetupBtn,#aiSetupBtnCal").forEach((btn) => {
+    if (!btn) return;
+    btn.innerHTML = hasKey ? `&#x26A1; AI: ${label}` : "&#x26A1; AI Setup";
+    btn.classList.toggle("ai-active", hasKey);
+  });
+  // Update model display inside setup modal if it's open
+  const modelEl = document.getElementById("geminiModelDisplay");
+  if (modelEl) modelEl.textContent = model || "detecting\u2026";
+}
+
+// ── CALORIE COUNTER ───────────────────────────────────────────────────────────
+
+function renderCalorieView() {
+  const logEl = document.getElementById("calorieLog");
+  if (!logEl) return;
+
+  const entries = state.calories[viewDay] || [];
+  const total = entries.reduce((sum, e) => sum + (e.cal || 0), 0);
+  const goal = state.calorieGoal || 2000;
+
+  // Header stats
+  const hCalToday = document.getElementById("hCalToday");
+  if (hCalToday) hCalToday.textContent = total;
+  const hCalGoal = document.getElementById("hCalGoal");
+  if (hCalGoal) hCalGoal.textContent = goal;
+
+  // Goal input — don't overwrite while user is typing
+  const goalInput = document.getElementById("calorieGoalInput");
+  if (goalInput && document.activeElement !== goalInput) goalInput.value = goal;
+
+  // Progress bar
+  const pct = goal > 0 ? Math.min(100, Math.round((total / goal) * 100)) : 0;
+  const barFill = document.getElementById("calorieBarFill");
+  if (barFill) {
+    barFill.style.width = pct + "%";
+    barFill.style.background =
+      pct >= 100
+        ? "var(--red)"
+        : pct >= 80
+        ? "var(--amber)"
+        : "linear-gradient(90deg,var(--green),#86efac)";
+  }
+  const pctEl = document.getElementById("caloriePct");
+  if (pctEl) pctEl.textContent = pct + "%";
+
+  // Log
+  if (!entries.length) {
+    logEl.innerHTML = `<div class="cal-empty">No food logged for ${MONTH_NAMES[viewMonth]} ${viewDay}.<br>Add items above to start tracking.</div>`;
+    return;
+  }
+
+  const colorClass =
+    total > goal ? "red" : total >= goal * 0.8 ? "amber" : "green";
+  let html = `<div class="cal-total-row">
+    <span class="cal-total-label">Total \u2014 ${MONTH_NAMES[viewMonth]} ${viewDay}</span>
+    <span class="cal-total-val ${colorClass}">${total} kcal</span>
+  </div>`;
+
+  entries
+    .slice()
+    .reverse()
+    .forEach((entry) => {
+      html += `<div class="cal-entry">
+      <div class="cal-entry-left">
+        <div class="cal-entry-food">${entry.food}</div>
+        ${entry.time ? `<div class="cal-entry-time">${entry.time}</div>` : ""}
+      </div>
+      <div class="cal-entry-right">
+        <div class="cal-entry-cal">${entry.cal} kcal</div>
+        <button class="habit-btn del" onclick="deleteCalorieEntry(${viewDay},'${
+        entry.id
+      }')" title="Remove">\u2715</button>
+      </div>
+    </div>`;
+    });
+
+  logEl.innerHTML = html;
+}
+
+function addCalorieEntry() {
+  const foodEl = document.getElementById("calFoodInput");
+  const amtEl = document.getElementById("calAmtInput");
+  if (!foodEl || !amtEl) return;
+
+  const food = foodEl.value.trim();
+  const cal = parseInt(amtEl.value, 10);
+  if (!food || !cal || cal <= 0) return;
+
+  if (!state.calories[viewDay]) state.calories[viewDay] = [];
+  const now = new Date();
+  const time = `${String(now.getHours()).padStart(2, "0")}:${String(
+    now.getMinutes()
+  ).padStart(2, "0")}`;
+  state.calories[viewDay].push({ id: uid(), food, cal, time });
+
+  foodEl.value = "";
+  amtEl.value = "";
+  foodEl.focus();
+
+  renderCalorieView();
+  scheduleSave();
+}
+
+function deleteCalorieEntry(day, id) {
+  if (!state.calories[day]) return;
+  state.calories[day] = state.calories[day].filter((e) => e.id !== id);
+  if (!state.calories[day].length) delete state.calories[day];
+  renderCalorieView();
+  scheduleSave();
+}
+
+async function updateCalorieGoal(val) {
+  const goal = parseInt(val, 10);
+  if (!goal || goal < 100) return;
+  state.calorieGoal = goal;
+  renderCalorieView();
+  await saveGlobalNote(); // saveGlobalNote now also persists calorieGoal
+}
+
 // ── RENDER ────────────────────────────────────────────────────────────────────
 
 function render() {
@@ -295,6 +813,7 @@ function render() {
   renderProgress();
   renderHabitsList();
   renderStats();
+  renderCalorieView();
 }
 
 function renderLabels() {
@@ -302,6 +821,8 @@ function renderLabels() {
   document.getElementById("sidebarMonth").textContent = label;
   document.getElementById("gridMonth").textContent = label;
   document.getElementById("progressMonth").textContent = label;
+  const calEl = document.getElementById("calorieMonth");
+  if (calEl) calEl.textContent = label;
   // Show month note preview in sidebar
   const noteEl = document.getElementById("sidebarMonthNote");
   if (noteEl) {
@@ -675,34 +1196,104 @@ async function deleteHabit(id) {
   render();
 }
 
-// Drag to reorder
-let dragId = null;
-function dragStart(id) {
-  dragId = id;
+// ── DRAG TO REORDER (Pointer Events — works on touch and mouse) ───────────────
+
+let _dragId = null;
+let _dragFromIdx = -1;
+
+function _initHabitDrag() {
+  document.querySelectorAll(".habit-drag").forEach((handle) => {
+    handle.addEventListener("pointerdown", _dragPointerDown, {
+      passive: false,
+    });
+  });
 }
-function dragOver(e, id) {
+
+function _dragPointerDown(e) {
+  if (e.pointerType === "mouse" && e.button !== 0) return;
   e.preventDefault();
-  document
-    .querySelectorAll(".habit-item")
-    .forEach((el) => el.classList.remove("drag-over"));
-  const el = document.querySelector(`[data-habit-id="${id}"]`);
-  if (el) el.classList.add("drag-over");
+
+  const item = e.currentTarget.closest(".habit-item");
+  if (!item) return;
+
+  _dragId = item.dataset.habitId;
+  _dragFromIdx = state.habits.findIndex((h) => h.id === _dragId);
+  if (_dragFromIdx < 0) return;
+
+  try {
+    e.currentTarget.setPointerCapture(e.pointerId);
+  } catch (_) {}
+
+  item.classList.add("dragging");
+
+  document.addEventListener("pointermove", _dragPointerMove, {
+    passive: false,
+  });
+  document.addEventListener("pointerup", _dragPointerUp, { once: true });
+  document.addEventListener("pointercancel", _dragCleanup, { once: true });
 }
-async function drop(id) {
+
+function _dragPointerMove(e) {
+  if (!_dragId) return;
+  e.preventDefault();
+
   document
-    .querySelectorAll(".habit-item")
+    .querySelectorAll(".habit-item.drag-over")
     .forEach((el) => el.classList.remove("drag-over"));
-  if (!dragId || dragId === id) return;
-  const fromIdx = state.habits.findIndex((h) => h.id === dragId);
-  const toIdx = state.habits.findIndex((h) => h.id === id);
-  if (fromIdx < 0 || toIdx < 0) return;
-  const [item] = state.habits.splice(fromIdx, 1);
-  state.habits.splice(toIdx, 0, item);
+
+  const items = Array.from(
+    document.querySelectorAll(".habit-item:not(.dragging)")
+  );
+  for (const el of items) {
+    const r = el.getBoundingClientRect();
+    if (e.clientY >= r.top && e.clientY < r.bottom) {
+      el.classList.add("drag-over");
+      break;
+    }
+  }
+
+  // Auto-scroll when near the top or bottom of the list
+  const list = document.getElementById("habitsList");
+  if (list) {
+    const r = list.getBoundingClientRect();
+    const edge = 56;
+    if (e.clientY - r.top < edge) list.scrollTop -= 6;
+    else if (r.bottom - e.clientY < edge) list.scrollTop += 6;
+  }
+}
+
+async function _dragPointerUp() {
+  if (!_dragId) return;
+  const target = document.querySelector(".habit-item.drag-over");
+  const targetId = target?.dataset.habitId;
+  const fromIdx = _dragFromIdx;
+  const fromId = _dragId;
+  _dragCleanup();
+
+  if (!targetId || targetId === fromId) return;
+  const toIdx = state.habits.findIndex((h) => h.id === targetId);
+  if (toIdx < 0 || toIdx === fromIdx) return;
+
+  const [moved] = state.habits.splice(fromIdx, 1);
+  state.habits.splice(toIdx, 0, moved);
   state.habits.forEach((h, i) => (h.order = i));
-  dragId = null;
   await saveHabits();
   render();
 }
+
+function _dragCleanup() {
+  document
+    .querySelectorAll(".habit-item")
+    .forEach((el) => el.classList.remove("dragging", "drag-over"));
+  document.removeEventListener("pointermove", _dragPointerMove);
+  _dragId = null;
+  _dragFromIdx = -1;
+}
+
+// Keep old names in window for backward compat — no longer used by HTML
+function dragStart() {}
+function dragOver() {}
+function drop() {}
 
 // ── RENDER HABITS LIST ────────────────────────────────────────────────────────
 
@@ -715,13 +1306,9 @@ function renderHabitsList() {
   el.innerHTML = state.habits
     .map(
       (h) => `
-    <div class="habit-item" data-habit-id="${h.id}"
-      draggable="true"
-      ondragstart="dragStart('${h.id}')"
-      ondragover="dragOver(event,'${h.id}')"
-      ondrop="drop('${h.id}')">
+    <div class="habit-item" data-habit-id="${h.id}">
       <div class="habit-item-left">
-        <span class="habit-drag">⠿</span>
+        <span class="habit-drag" title="Hold &amp; drag to reorder">⠿</span>
         <span class="habit-name">${h.name}</span>
         ${h.cat ? `<span class="habit-cat">${h.cat}</span>` : ""}
       </div>
@@ -736,6 +1323,7 @@ function renderHabitsList() {
     </div>`
     )
     .join("");
+  _initHabitDrag();
 }
 
 // ── STATS ─────────────────────────────────────────────────────────────────────
@@ -762,6 +1350,12 @@ function renderStats() {
     else break;
   }
   document.getElementById("hStreak").textContent = streak;
+
+  // Calories for the viewed day — shown in grid header
+  const calEntries = state.calories[viewDay] || [];
+  const calTotal = calEntries.reduce((s, e) => s + (e.cal || 0), 0);
+  const calDash = document.getElementById("hCalDash");
+  if (calDash) calDash.textContent = calTotal > 0 ? String(calTotal) : "—";
 }
 
 // ── PROGRESS VIEW ─────────────────────────────────────────────────────────────
@@ -917,6 +1511,21 @@ function openDayModal(day) {
     html += `<div class="day-modal-note">${note}</div>`;
   }
 
+  // Calorie summary for the day
+  const calEntries = state.calories[day] || [];
+  if (calEntries.length) {
+    const calTotal = calEntries.reduce((s, e) => s + (e.cal || 0), 0);
+    const goal = state.calorieGoal || 2000;
+    const calCls =
+      calTotal > goal ? "red" : calTotal >= goal * 0.8 ? "amber" : "green";
+    html += `<div class="day-modal-cal-summary">
+      <span class="day-modal-cal-label">🔥 ${calEntries.length} item${
+      calEntries.length !== 1 ? "s" : ""
+    } logged</span>
+      <span class="day-modal-cal-val ${calCls}">${calTotal} kcal</span>
+    </div>`;
+  }
+
   if (!future) {
     html += `<div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">Day verdict</div>`;
     html += `<div class="day-modal-status">
@@ -983,16 +1592,19 @@ function nextMonth() {
 
 function prevDay() {
   viewDay = Math.max(1, viewDay - 1);
+  dismissAISuggestion();
   render();
 }
 function nextDay() {
   viewDay = Math.min(DAYS_IN_VIEW(), viewDay + 1);
+  dismissAISuggestion();
   render();
 }
 function goToToday() {
   viewYear = CURRENT_YEAR;
   viewMonth = CURRENT_MONTH;
   viewDay = CURRENT_DAY;
+  dismissAISuggestion();
   subscribeToMonth(viewYear, viewMonth);
   render();
 }
@@ -1007,6 +1619,7 @@ function showView(name) {
   document.getElementById("view-" + name).classList.add("active");
   document.getElementById("nav-" + name).classList.add("active");
   if (name === "progress") renderProgressView();
+  if (name === "calories") renderCalorieView();
 }
 
 function toggleSidebar() {
@@ -1128,6 +1741,21 @@ Object.assign(window, {
   prevDay,
   nextDay,
   goToToday,
+  addCalorieEntry,
+  deleteCalorieEntry,
+  updateCalorieGoal,
+  onFoodInputChange,
+  triggerAIFromFoodInput,
+  acceptAISuggestion,
+  dismissAISuggestion,
+  triggerPhotoUpload,
+  handlePhotoUpload,
+  togglePhotoEntry,
+  updatePhotoEntryCalories,
+  addPhotoEntries,
+  openAISetup,
+  saveGeminiKey,
+  removeGeminiKey,
 });
 
 // ── START ─────────────────────────────────────────────────────────────────────

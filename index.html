@@ -62,6 +62,9 @@
       <button class="nav-item" onclick="showView('habits')" id="nav-habits">
         <span class="nav-icon">✦</span><span class="nav-label">Habits</span>
       </button>
+      <button class="nav-item" onclick="showView('calories')" id="nav-calories">
+        <span class="nav-icon">◈</span><span class="nav-label">Calories</span>
+      </button>
     </nav>
 
     <div class="sidebar-bottom">
@@ -77,6 +80,7 @@
       </div>
       <button class="btn-ghost danger" onclick="confirmReset()">Reset Month</button>
       <button class="btn-ghost small" onclick="changeFirebase()">Change DB</button>
+      <button class="btn-ghost small" id="aiSetupBtn" onclick="openAISetup()">&#x26A1; AI Setup</button>
     </div>
   </aside>
 
@@ -114,6 +118,10 @@
           <div class="hstat">
             <div class="hstat-val amber" id="hStreak">0</div>
             <div class="hstat-label">Streak</div>
+          </div>
+          <div class="hstat">
+            <div class="hstat-val" id="hCalDash">—</div>
+            <div class="hstat-label">kcal</div>
           </div>
         </div>
       </div>
@@ -202,6 +210,72 @@
       <div class="habits-list" id="habitsList"></div>
     </div>
 
+    <!-- ── CALORIES VIEW ── -->
+    <div id="view-calories" class="view">
+      <div class="view-header">
+        <div>
+          <div style="display:flex;align-items:center;gap:12px">
+            <div class="view-eyebrow" id="calorieMonth">—</div>
+            <div class="day-nav">
+              <button class="nav-btn" onclick="prevDay()">◂</button>
+              <button class="btn-ghost small" onclick="goToToday()">Today</button>
+              <button class="nav-btn" onclick="nextDay()">▸</button>
+              <button class="btn-ghost small" id="aiSetupBtnCal" onclick="openAISetup()">&#x26A1; AI Setup</button>
+            </div>
+          </div>
+          <h2 class="view-title">Calorie Counter</h2>
+        </div>
+        <div class="header-stats">
+          <div class="hstat">
+            <div class="hstat-val" id="hCalToday">0</div>
+            <div class="hstat-label">kcal today</div>
+          </div>
+          <div class="hstat">
+            <div class="hstat-val amber" id="hCalGoal">2000</div>
+            <div class="hstat-label">Goal</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="cal-goal-bar">
+        <span class="cal-goal-label">Daily Goal</span>
+        <input class="cal-goal-input" id="calorieGoalInput" type="number" min="100" max="9999" value="2000" onchange="updateCalorieGoal(this.value)">
+        <span class="month-bar-label">kcal</span>
+        <div class="cal-pbar-wrap">
+          <div class="month-bar-track"><div class="month-bar-fill" id="calorieBarFill" style="width:0%"></div></div>
+          <span class="month-bar-pct" id="caloriePct">0%</span>
+        </div>
+      </div>
+
+      <div class="cal-add-form">
+        <input class="form-input" id="calFoodInput" type="text"
+          placeholder="Food name (e.g. chyawanprash, dal rice…)" maxlength="80"
+          oninput="onFoodInputChange()"
+          onkeydown="if(event.key==='Enter'){triggerAIFromFoodInput();event.preventDefault()}">
+        <button class="btn-ghost cal-ai-btn" onclick="triggerAIFromFoodInput()" title="Ask AI to estimate calories">&#x26A1;</button>
+        <input class="form-input cal-num-input" id="calAmtInput" type="number" placeholder="kcal" min="1" max="9999"
+          onkeydown="if(event.key==='Enter')addCalorieEntry()">
+        <button class="btn-ghost cal-photo-btn" onclick="triggerPhotoUpload()" title="Estimate from photo">&#x1F4F7;</button>
+        <button class="btn-primary" onclick="addCalorieEntry()">+ Add</button>
+      </div>
+
+      <!-- AI suggestion chip -->
+      <div id="aiSuggestion" class="ai-suggestion hidden">
+        <span id="aiLoading" class="ai-loading hidden">estimating…</span>
+        <div id="aiChip" class="ai-chip hidden">
+          <span id="aiChipText" class="ai-chip-text"></span>
+          <button class="ai-chip-accept" onclick="acceptAISuggestion()">&#x2713; Use</button>
+          <button class="ai-chip-dismiss" onclick="dismissAISuggestion()">&#x2715;</button>
+        </div>
+      </div>
+
+      <!-- Hidden file input for photo upload -->
+      <input type="file" id="calPhotoInput" accept="image/*" capture="environment"
+        style="display:none" onchange="handlePhotoUpload(event)">
+
+      <div id="calorieLog" class="cal-log"></div>
+    </div>
+
   </main>
 </div>
 
@@ -256,7 +330,51 @@
     <div id="dayModalContent"></div>
   </div>
 </div>
+<!-- ── AI SETUP MODAL ── -->
+<div class="modal-overlay hidden" id="aiSetupModal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">&#x26A1; AI Calorie Estimation</div>
+      <button class="modal-close" onclick="closeModal('aiSetupModal')">&#x2715;</button>
+    </div>
+    <p class="ai-setup-hint">
+      Get a free API key from <a href="https://aistudio.google.com/app/apikey" target="_blank">Google AI Studio</a>.
+      Sign in &rarr; Create API key &rarr; Copy &amp; paste below.<br>
+      <span style="color:var(--text-dim);font-size:11px">Free: 1,500 requests/day &middot; Understands Indian foods, chyawanprash, dal makhani, etc. &middot; Key stored only on this device.</span>
+    </p>
+    <div class="form-group">
+      <label class="form-label">Gemini API Key</label>
+      <input class="form-input" id="geminiKeyInput" type="password" placeholder="AIza…"
+        onkeydown="if(event.key==='Enter')saveGeminiKey()">
+    </div>
+    <div id="geminiSetupError" class="setup-error hidden"></div>
+    <div class="gemini-model-row">
+      <span class="form-label" style="margin-bottom:0">Active model</span>
+      <span id="geminiModelDisplay" class="gemini-model-badge">—</span>
+      <span style="font-size:11px;color:var(--text-dim)">(auto-selected from your account)</span>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-ghost danger" onclick="removeGeminiKey()">Remove</button>
+      <button class="btn-ghost" onclick="closeModal('aiSetupModal')">Cancel</button>
+      <button class="btn-primary" onclick="saveGeminiKey()">Save &amp; Enable</button>
+    </div>
+  </div>
+</div>
 
+<!-- ── PHOTO RESULT MODAL ── -->
+<div class="modal-overlay hidden" id="photoResultModal">
+  <div class="modal wide">
+    <div class="modal-header">
+      <div class="modal-title">&#x1F4F7; Photo Analysis</div>
+      <button class="modal-close" onclick="closeModal('photoResultModal')">&#x2715;</button>
+    </div>
+    <div id="photoResultContent"></div>
+    <div class="modal-actions">
+      <button class="btn-ghost" onclick="closeModal('photoResultModal')">Cancel</button>
+      <button class="btn-primary" onclick="addPhotoEntries()">Add Selected</button>
+    </div>
+  </div>
+</div>
 <script>
   // Load module script with cache-busting query param to ensure latest JS is fetched.
   (function(){
