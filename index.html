@@ -301,6 +301,23 @@
         style="display:none" onchange="handlePhotoUpload(event)">
 
       <div id="calorieLog" class="cal-log"></div>
+
+      <!-- ── AI CHAT ── -->
+      <div class="section-head"><span class="sh-icon">◈</span> Ask AI <span class="section-hint">about today's diet</span></div>
+      <div class="chat-quicktips" id="chatQuickTips">
+        <button class="chat-tip" onclick="sendQuickChat('What should I eat for the rest of the day to stay within my goal?')">What to eat next?</button>
+        <button class="chat-tip" onclick="sendQuickChat('How am I doing with my calories today?')">How am I doing?</button>
+        <button class="chat-tip" onclick="sendQuickChat('Suggest a light Indian dinner option.')">Light dinner idea</button>
+        <button class="chat-tip" onclick="sendQuickChat('Give me a quick healthy snack idea.')">Healthy snack?</button>
+      </div>
+      <div class="chat-log" id="chatLog"></div>
+      <div class="chat-input-row">
+        <textarea class="chat-input" id="chatInput" rows="1"
+          placeholder="Ask anything about your diet today…"
+          onkeydown="if(event.key==='Enter'&&!event.shiftKey){sendChat();event.preventDefault()}"
+          oninput="this.style.height='auto';this.style.height=this.scrollHeight+'px'"></textarea>
+        <button class="chat-send-btn" id="chatSendBtn" onclick="sendChat()">&#x2191;</button>
+      </div>
     </div>
 
   </main>

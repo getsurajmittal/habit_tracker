@@ -813,6 +813,106 @@ async function updateCalorieGoal(val) {
   await saveGlobalNote(); // saveGlobalNote now also persists calorieGoal
 }
 
+// ── AI CHATBOT ────────────────────────────────────────────────────────────────
+
+let _chatHistory = [];
+
+function _buildCalorieContext() {
+  const entries = state.calories[viewDay] || [];
+  const total = entries.reduce((s, e) => s + (e.cal || 0), 0);
+  const goal = state.calorieGoal || 2000;
+  const dateStr = `${MONTH_NAMES[viewMonth]} ${viewDay}, ${viewYear}`;
+  let ctx = `Today is ${dateStr}. Daily calorie goal: ${goal} kcal. Consumed so far: ${total} kcal (${Math.round(
+    (total / goal) * 100
+  )}% of goal). Remaining: ${Math.max(0, goal - total)} kcal.`;
+  if (entries.length) {
+    ctx += ` Foods logged today: ${entries
+      .map((e) => `${e.food} (${e.cal} kcal)`)
+      .join(", ")}.`;
+  } else {
+    ctx += ` No food logged yet today.`;
+  }
+  return ctx;
+}
+
+function _appendChatMessage(role, text) {
+  _chatHistory.push({ role, text });
+  const log = document.getElementById("chatLog");
+  if (!log) return;
+  const div = document.createElement("div");
+  div.className = `chat-msg ${role}`;
+  div.textContent = text;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+}
+
+function _setChatThinking(show) {
+  const btn = document.getElementById("chatSendBtn");
+  const input = document.getElementById("chatInput");
+  if (btn) {
+    btn.disabled = show;
+    btn.textContent = show ? "\u2026" : "\u2191";
+  }
+  if (input) input.disabled = show;
+  if (show) {
+    const log = document.getElementById("chatLog");
+    if (log) {
+      const el = document.createElement("div");
+      el.className = "chat-msg ai chat-thinking";
+      el.id = "chatThinking";
+      el.textContent = "thinking\u2026";
+      log.appendChild(el);
+      log.scrollTop = log.scrollHeight;
+    }
+  } else {
+    const el = document.getElementById("chatThinking");
+    if (el) el.remove();
+  }
+}
+
+async function sendChat() {
+  const inputEl = document.getElementById("chatInput");
+  if (!inputEl) return;
+  const question = inputEl.value.trim();
+  if (!question) return;
+  if (!localStorage.getItem(GEMINI_KEY_KEY)) {
+    openAISetup();
+    return;
+  }
+
+  inputEl.value = "";
+  inputEl.style.height = "auto";
+  _appendChatMessage("user", question);
+  _setChatThinking(true);
+
+  const tips = document.getElementById("chatQuickTips");
+  if (tips) tips.classList.add("hidden");
+
+  try {
+    const ctx = _buildCalorieContext();
+    const prompt = `You are a friendly, practical health and nutrition assistant inside a personal habit tracker app. Keep replies concise (2-4 sentences). Be non-judgmental and supportive. The user eats Indian and global foods.\n\nContext: ${ctx}\n\nQuestion: ${question}`;
+    const reply = await callGemini(prompt);
+    _setChatThinking(false);
+    _appendChatMessage("ai", reply.trim());
+  } catch (e) {
+    _setChatThinking(false);
+    _appendChatMessage(
+      "ai",
+      "\u26a0 Could not reach AI \u2014 check your Gemini key in AI Setup."
+    );
+    console.warn("Chat error:", e);
+  }
+}
+
+function sendQuickChat(question) {
+  const inputEl = document.getElementById("chatInput");
+  if (inputEl) {
+    inputEl.value = question;
+    inputEl.style.height = "auto";
+  }
+  sendChat();
+}
+
 // ── RENDER ────────────────────────────────────────────────────────────────────
 
 function render() {
@@ -1879,6 +1979,8 @@ Object.assign(window, {
   openAISetup,
   saveGeminiKey,
   removeGeminiKey,
+  sendChat,
+  sendQuickChat,
 });
 
 // ── START ─────────────────────────────────────────────────────────────────────
