@@ -913,6 +913,26 @@ function sendQuickChat(question) {
   sendChat();
 }
 
+function toggleChat() {
+  const panel = document.getElementById("chatPanel");
+  const fab = document.getElementById("chatFab");
+  if (!panel || !fab) return;
+  const opening = panel.classList.contains("hidden");
+  panel.classList.toggle("hidden", !opening);
+  fab.classList.toggle("open", opening);
+  if (opening) {
+    setTimeout(() => document.getElementById("chatInput")?.focus(), 80);
+  }
+}
+
+function clearChat() {
+  _chatHistory = [];
+  const log = document.getElementById("chatLog");
+  if (log) log.innerHTML = "";
+  const tips = document.getElementById("chatQuickTips");
+  if (tips) tips.classList.remove("hidden");
+}
+
 // ── RENDER ────────────────────────────────────────────────────────────────────
 
 function render() {
@@ -1981,6 +2001,8 @@ Object.assign(window, {
   removeGeminiKey,
   sendChat,
   sendQuickChat,
+  toggleChat,
+  clearChat,
 });
 
 // ── START ─────────────────────────────────────────────────────────────────────
