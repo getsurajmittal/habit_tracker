@@ -392,12 +392,17 @@ function parseGeminiJSON(text) {
 }
 
 async function estimateCaloriesFromText(food) {
-  const prompt = `You are a nutrition expert with deep knowledge of Indian cuisine and global foods.
-Estimate calories for the described food item using typical Indian household portions.
+  const prompt = `You are a nutrition expert with deep knowledge of Indian and global foods, including restaurant chains, branded products, and home-cooked meals.
+Estimate calories for the described food item. The input may be:
+- A dish name: "paneer butter masala", "biryani", "Big Mac"
+- A brand + item: "Haldiram's Bhujia", "Amul butter", "Nescafe coffee"
+- A place + dish: "McDonald's McAloo Tikki", "Domino's margherita slice", "Subway 6-inch veggie"
+- A vague description: "thali at dhaba", "chyawanprash", "protein shake"
+Use typical Indian household or standard restaurant serving sizes. Give a rough but reasonable estimate.
 Reference sizes: 1 chapati ~80 kcal, 1 bowl dal ~150 kcal, 1 tsp chyawanprash ~40 kcal,
 1 cup cooked rice ~200 kcal, 1 glass milk ~150 kcal, 1 banana ~90 kcal, 1 egg ~78 kcal.
 Return ONLY valid JSON, no markdown, no extra text:
-{"calories": 250, "description": "e.g. 1 medium chapati (~30g)"}
+{"calories": 250, "description": "e.g. 1 McAloo Tikki burger (standard)"}
 
 Food: "${food}"`;
   const raw = await callGemini(prompt);
@@ -512,6 +517,7 @@ function _hideAISuggestion() {
 function acceptAISuggestion() {
   if (!aiSuggestionData) return;
   document.getElementById("calAmtInput").value = aiSuggestionData.calories;
+  aiSuggestionData = null;
   _hideAISuggestion();
   document.getElementById("calAmtInput").focus();
 }
@@ -783,6 +789,8 @@ function addCalorieEntry() {
 
   foodEl.value = "";
   amtEl.value = "";
+  aiSuggestionData = null;
+  _hideAISuggestion();
   foodEl.focus();
 
   renderCalorieView();
@@ -822,7 +830,8 @@ function renderLabels() {
   document.getElementById("gridMonth").textContent = label;
   document.getElementById("progressMonth").textContent = label;
   const calEl = document.getElementById("calorieMonth");
-  if (calEl) calEl.textContent = label;
+  if (calEl)
+    calEl.textContent = `${MONTH_NAMES[viewMonth]} ${viewDay}, ${viewYear}`;
   // Show month note preview in sidebar
   const noteEl = document.getElementById("sidebarMonthNote");
   if (noteEl) {
