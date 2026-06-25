@@ -354,6 +354,19 @@ button, .chk, .daybtn, .notebtn, .habit-btn {
 .journal-empty.future .journal-add-btn:hover{background:var(--blue-bg)}
 .journal-empty-state{color:var(--text-dim);font-size:13px;padding:24px 0;text-align:center}
 
+/* ── VERDICT BAR ── */
+.verdict-bar{
+  display:flex;align-items:center;gap:12px;
+  padding:8px 12px;margin-bottom:8px;
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--radius);
+}
+.vbar-label{
+  font-family:var(--mono);font-size:9px;color:var(--green);
+  text-transform:uppercase;letter-spacing:.1em;white-space:nowrap;flex-shrink:0;
+}
+.vbar-btns{display:flex;gap:4px;flex-wrap:wrap}
+
 /* ── SECTION DIVIDER IN TABLE ── */
 .row-section td{
   padding:12px 0 4px!important;border-bottom:1px solid var(--border)!important;
@@ -362,6 +375,8 @@ button, .chk, .daybtn, .notebtn, .habit-btn {
   font-family:var(--mono);font-size:8px;color:var(--text-dim);
   text-transform:uppercase;letter-spacing:.12em;padding-left:6px;text-align:left;
 }
+.row-done-divider td{border-top:2px solid var(--border)!important;margin-top:4px}
+.row-done-divider .section-name{color:var(--green)!important;opacity:.7}
 
 /* ── PROGRESS VIEW ── */
 .progress-heroes{

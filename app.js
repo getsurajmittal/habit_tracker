@@ -986,7 +986,36 @@ function renderLabels() {
 function renderGrid() {
   renderGridHead();
   renderGridBody();
+  renderVerdictBar();
   renderDayNoteBanner();
+}
+
+function renderVerdictBar() {
+  const bar = document.getElementById("verdictBar");
+  if (!bar) return;
+  const dim = DAYS_IN_VIEW();
+  const days = singleDayView
+    ? [viewDay]
+    : Array.from({ length: dim }, (_, i) => i + 1);
+
+  let html = `<span class="vbar-label">✦ Successful Day</span><div class="vbar-btns">`;
+  days.forEach((d) => {
+    const v = state.successDays[d];
+    const future = isFuture(d);
+    let cls = future ? "future" : "";
+    let icon = "·";
+    if (v === "success") {
+      cls += " success";
+      icon = "✓";
+    }
+    if (v === "fail") {
+      cls += " fail";
+      icon = "✕";
+    }
+    html += `<button class="daybtn ${cls}" onclick="cycleDay(${d},this)" title="Day ${d}">${icon}</button>`;
+  });
+  html += `</div>`;
+  bar.innerHTML = html;
 }
 
 function renderDayNoteBanner() {
@@ -1051,103 +1080,97 @@ function renderGridBody() {
     return;
   }
 
-  // Group by category
-  const catMap = {};
-  habits.forEach((h) => {
-    const c = h.cat || "General";
-    if (!catMap[c]) catMap[c] = [];
-    catMap[c].push(h);
-  });
+  const dim = DAYS_IN_VIEW();
+  const days = singleDayView
+    ? [viewDay]
+    : Array.from({ length: dim }, (_, i) => i + 1);
+  const visibleDays =
+    viewYear === CURRENT_YEAR && viewMonth === CURRENT_MONTH
+      ? CURRENT_DAY
+      : dim;
+
+  // Split: habits marked (tick/cross/dash) for viewDay sink to bottom
+  const viewDayMap = state.checks[viewDay] || {};
+  const _isMarked = (h) => {
+    const v = normalizeCheckValue(viewDayMap[h.id]);
+    return v === "tick" || v === "cross" || v === "dash";
+  };
+  const unmarked = habits.filter((h) => !_isMarked(h));
+  const marked = habits.filter((h) => _isMarked(h));
+
+  // Helper: render one habit row
+  const habitRow = (habit) => {
+    const tid = habit.id;
+    let row = `<tr><td class="td-task">${habit.name}`;
+    if (habit.cat) row += `<span class="td-cat">${habit.cat}</span>`;
+    row += `</td>`;
+    days.forEach((d) => {
+      const raw = state.checks[d]?.[tid];
+      const checked = normalizeCheckValue(raw);
+      const future = isFuture(d);
+      const icon =
+        checked === "tick"
+          ? "✓"
+          : checked === "cross"
+          ? "✕"
+          : checked === "dash"
+          ? "—"
+          : "";
+      const cls =
+        checked === "tick"
+          ? "tick"
+          : checked === "cross"
+          ? "cross"
+          : checked === "dash"
+          ? "dash"
+          : "";
+      row += `<td><button class="chk ${cls} ${future ? "future" : ""}"
+          onclick="toggleCheck(${d},'${tid}',this)"
+          title="${habit.name} — Day ${d}">${icon}</button></td>`;
+    });
+    row += `</tr>`;
+    return row;
+  };
+
+  // Helper: render category-grouped habits
+  const renderGroup = (list) => {
+    const catMap = {};
+    list.forEach((h) => {
+      const c = h.cat || "General";
+      if (!catMap[c]) catMap[c] = [];
+      catMap[c].push(h);
+    });
+    return Object.entries(catMap)
+      .map(
+        ([cat, hs]) =>
+          `<tr class="row-section"><td class="section-name" colspan="${
+            days.length + 1
+          }">${cat}</td></tr>` + hs.map(habitRow).join("")
+      )
+      .join("");
+  };
 
   let html = "";
-  Object.entries(catMap).forEach(([cat, catHabits]) => {
-    // Section row
-    const dim = DAYS_IN_VIEW();
-    const days = singleDayView
-      ? [viewDay]
-      : Array.from({ length: dim }, (_, i) => i + 1);
-    html += `<tr class="row-section">
-      <td class="section-name" colspan="${days.length + 1}">${cat}</td>
-    </tr>`;
 
-    catHabits.forEach((habit) => {
-      const tid = habit.id;
-      html += `<tr>`;
-      html += `<td class="td-task">${habit.name}</td>`;
-      let doneCount = 0;
-      const dim2 = DAYS_IN_VIEW();
-      const days2 = singleDayView
-        ? [viewDay]
-        : Array.from({ length: dim2 }, (_, i) => i + 1);
-      days2.forEach((d) => {
-        const raw = state.checks[d]?.[tid];
-        const checked = normalizeCheckValue(raw);
-        const future = isFuture(d);
-        if ((checked === "tick" || checked === "dash") && !future) doneCount++;
-        const icon =
-          checked === "tick"
-            ? "✓"
-            : checked === "cross"
-            ? "✕"
-            : checked === "dash"
-            ? "—"
-            : "";
-        const cls =
-          checked === "tick"
-            ? "tick"
-            : checked === "cross"
-            ? "cross"
-            : checked === "dash"
-            ? "dash"
-            : "";
-        html += `<td>
-          <button class="chk ${cls} ${future ? "future" : ""}"
-            onclick="toggleCheck(${d},'${tid}',this)"
-            title="${habit.name} — Day ${d}">${icon}</button>
-        </td>`;
-      });
-      const visibleDays =
-        viewYear === CURRENT_YEAR && viewMonth === CURRENT_MONTH
-          ? CURRENT_DAY
-          : DAYS_IN_VIEW();
-      const pct =
-        visibleDays > 0 ? Math.round((doneCount / visibleDays) * 100) : 0;
-      html += `</tr>`;
-    });
-  });
+  if (unmarked.length === 0 && marked.length > 0) {
+    html += `<tr class="row-section"><td class="section-name" style="color:var(--green)" colspan="${
+      days.length + 1
+    }">✦ All done for today</td></tr>`;
+  } else {
+    html += renderGroup(unmarked);
+  }
 
-  // ── Successful Day row ──
-  const dim3 = DAYS_IN_VIEW();
-  const days3 = singleDayView
-    ? [viewDay]
-    : Array.from({ length: dim3 }, (_, i) => i + 1);
-  html += `<tr class="row-section"><td class="section-name" colspan="${
-    days3.length + 1
-  }">Daily Verdict</td></tr>`;
-  html += `<tr class="row-succ">
-    <td class="td-task" style="font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--green)">✦ Successful Day</td>`;
-  days3.forEach((d) => {
-    const v = state.successDays[d];
-    const future = isFuture(d);
-    let cls = future ? "future" : "";
-    let icon = "·";
-    if (v === "success") {
-      cls += " success";
-      icon = "✓";
-    }
-    if (v === "fail") {
-      cls += " fail";
-      icon = "✕";
-    }
-    html += `<td><button class="daybtn ${cls}"
-      onclick="cycleDay(${d},this)" title="Day ${d}">${icon}</button></td>`;
-  });
-  html += `<td></td></tr>`;
+  if (marked.length > 0) {
+    html += `<tr class="row-section row-done-divider"><td class="section-name" colspan="${
+      days.length + 1
+    }">✓ Marked today &middot; ${marked.length}</td></tr>`;
+    html += marked.map(habitRow).join("");
+  }
 
-  // ── Notes row ── (per-day notes, shown beneath verdict)
+  // ── Notes row ──
   html += `<tr class="row-note">
     <td class="td-task" style="font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--purple)">✎ Notes</td>`;
-  days3.forEach((d) => {
+  days.forEach((d) => {
     const has = !!state.notes[d];
     const future = isFuture(d);
     html += `<td class="td-notes"><button data-day="${d}" class="notebtn ${
