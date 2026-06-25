@@ -1979,6 +1979,14 @@ function showView(name) {
   if (name === "progress") renderProgressView();
   if (name === "calories") renderCalorieView();
   if (name === "notes") renderNotesView();
+  // Auto-close sidebar on mobile after selecting a view
+  if (window.innerWidth <= 640) {
+    const sidebar = document.getElementById("sidebar");
+    const backdrop = document.getElementById("mobileBackdrop");
+    sidebar.classList.remove("mobile-open");
+    if (backdrop) backdrop.classList.add("hidden");
+    document.body.style.overflow = "";
+  }
 }
 
 function toggleSidebar() {
