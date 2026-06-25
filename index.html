@@ -65,6 +65,9 @@
       <button class="nav-item" onclick="showView('calories')" id="nav-calories">
         <span class="nav-icon">◈</span><span class="nav-label">Calories</span>
       </button>
+      <button class="nav-item" onclick="showView('notes')" id="nav-notes">
+        <span class="nav-icon">✎</span><span class="nav-label">Notes</span>
+      </button>
     </nav>
 
     <div class="sidebar-bottom">
@@ -100,11 +103,9 @@
               <button class="nav-btn" onclick="prevDay()">◂</button>
               <button class="btn-ghost small" onclick="goToToday()">Today</button>
               <button class="nav-btn" onclick="nextDay()">▸</button>
-              <button class="btn-ghost small" onclick="openMonthNote()">Month Notes</button>
             </div>
           </div>
           <h2 class="view-title">Daily Habits</h2>
-          <div id="dashboardStickyNote" class="dashboard-sticky hidden" onclick="openMonthNote()"></div>
         </div>
         <div class="header-stats">
           <div class="hstat">
@@ -131,6 +132,8 @@
         <div class="month-bar-track"><div class="month-bar-fill" id="monthFill"></div></div>
         <span class="month-bar-pct" id="monthPct">0%</span>
       </div>
+
+      <div id="dayNoteBanner" class="day-note-banner hidden"></div>
 
       <div class="table-wrap">
         <table class="htable" id="htable">
@@ -301,6 +304,27 @@
         style="display:none" onchange="handlePhotoUpload(event)">
 
       <div id="calorieLog" class="cal-log"></div>
+    </div>
+
+    <!-- ── NOTES VIEW ── -->
+    <div id="view-notes" class="view">
+      <div class="view-header">
+        <div>
+          <div class="view-eyebrow" id="notesMonth">—</div>
+          <h2 class="view-title">Notes</h2>
+        </div>
+      </div>
+
+      <div class="section-head"><span class="sh-icon">◎</span> Month Note <span class="section-hint">for the whole month</span></div>
+      <div class="month-note-wrap">
+        <textarea id="monthNoteInput" class="month-note-textarea"
+          placeholder="Write monthly goals, reflections, plans…"
+          oninput="onMonthNoteInput()"></textarea>
+        <div class="month-note-hint">Auto-saves as you type</div>
+      </div>
+
+      <div class="section-head"><span class="sh-icon">✎</span> Day Entries <span class="section-hint">tap any day to edit — future days welcome</span></div>
+      <div id="notesJournal" class="notes-journal"></div>
     </div>
 
   </main>

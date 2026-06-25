@@ -942,6 +942,7 @@ function render() {
   renderHabitsList();
   renderStats();
   renderCalorieView();
+  renderNotesView();
 }
 
 function renderLabels() {
@@ -985,6 +986,36 @@ function renderLabels() {
 function renderGrid() {
   renderGridHead();
   renderGridBody();
+  renderDayNoteBanner();
+}
+
+function renderDayNoteBanner() {
+  const banner = document.getElementById("dayNoteBanner");
+  if (!banner) return;
+  if (!singleDayView) {
+    banner.classList.add("hidden");
+    return;
+  }
+  const note = state.notes[viewDay];
+  const dateStr = `${MONTH_NAMES[viewMonth]} ${viewDay}`;
+  const fut = isFuture(viewDay);
+  if (note) {
+    banner.className = "day-note-banner dnb-has-note";
+    banner.innerHTML = `<div class="dnb-label">${
+      fut ? "\u270e Plan" : "\u270e Note"
+    } \u2014 ${dateStr}</div><div class="dnb-text">${note
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(
+        /\n/g,
+        "<br>"
+      )}</div><button class="dnb-edit" onclick="openNote(${viewDay})">Edit</button>`;
+  } else {
+    banner.className = "day-note-banner dnb-empty";
+    banner.innerHTML = `<button class="dnb-add" onclick="openNote(${viewDay})">${
+      fut ? "\u270e Add a plan for" : "\u270e Add a note for"
+    } ${dateStr}</button>`;
+  }
 }
 
 function renderGridHead() {
@@ -1207,14 +1238,13 @@ let activeNoteDay = null;
 let activeMonthHabit = null;
 let activeMonthNote = false;
 function openNote(day) {
-  if (isFuture(day)) return;
   activeMonthNote = false;
   activeMonthHabit = null;
   activeNoteDay = day;
-  console.log("openNote: opening day note for", viewMonth, day);
-  document.getElementById(
-    "noteModalTitle"
-  ).textContent = `Notes — ${MONTH_NAMES[viewMonth]} ${day}`;
+  const label = isFuture(day)
+    ? `Plan — ${MONTH_NAMES[viewMonth]} ${day}`
+    : `Notes — ${MONTH_NAMES[viewMonth]} ${day}`;
+  document.getElementById("noteModalTitle").textContent = label;
   document.getElementById("noteText").value = state.notes[day] || "";
   openModal("noteModal");
   setTimeout(() => document.getElementById("noteText").focus(), 60);
@@ -1228,7 +1258,6 @@ function openMonthNote() {
     "noteModalTitle"
   ).textContent = `Month Notes — ${MONTH_NAMES[viewMonth]} ${viewYear}`;
   document.getElementById("noteText").value = state.globalNote || "";
-  console.log("openMonthNote: opening month note editor");
   openModal("noteModal");
   setTimeout(() => document.getElementById("noteText").focus(), 60);
 }
@@ -1250,10 +1279,95 @@ function saveNote() {
   closeModal("noteModal");
   renderGrid();
   renderProgressView();
+  renderNotesView();
   scheduleSave();
 }
 
 // removed per-habit month note function — now using a single month note
+
+// ── NOTES VIEW ───────────────────────────────────────────────────────────────
+
+let _monthNoteTimer = null;
+
+function onMonthNoteInput() {
+  const val = document.getElementById("monthNoteInput")?.value ?? "";
+  state.globalNote = val;
+  clearTimeout(_monthNoteTimer);
+  _monthNoteTimer = setTimeout(() => {
+    saveGlobalNote().catch((e) => console.warn("auto-save month note:", e));
+  }, 800);
+}
+
+function renderNotesView() {
+  const notesMonthEl = document.getElementById("notesMonth");
+  if (notesMonthEl)
+    notesMonthEl.textContent = `${MONTH_NAMES[viewMonth]} ${viewYear}`;
+
+  // Sync month note textarea without disturbing active typing
+  const textarea = document.getElementById("monthNoteInput");
+  if (textarea && document.activeElement !== textarea)
+    textarea.value = state.globalNote || "";
+
+  const journal = document.getElementById("notesJournal");
+  if (!journal) return;
+
+  const daysIn = DAYS_IN_VIEW();
+  const todayDay =
+    viewYear === CURRENT_YEAR && viewMonth === CURRENT_MONTH
+      ? CURRENT_DAY
+      : daysIn;
+  const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+  let html = "";
+  for (let d = daysIn; d >= 1; d--) {
+    const note = state.notes[d];
+    const isToday =
+      viewYear === CURRENT_YEAR &&
+      viewMonth === CURRENT_MONTH &&
+      d === CURRENT_DAY;
+    const fut = d > todayDay;
+    const dow = DOW[new Date(viewYear, viewMonth - 1, d).getDay()];
+    const safe = note
+      ? note
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/\n/g, "<br>")
+      : "";
+
+    if (note) {
+      html += `<div class="journal-card${isToday ? " today" : ""}">
+        <div class="journal-card-head">
+          <div class="journal-date">
+            <span class="journal-day-num">${d}</span>
+            <span class="journal-dow">${dow}</span>
+            ${
+              isToday
+                ? `<span class="journal-chip today-chip">today</span>`
+                : ""
+            }
+            ${fut ? `<span class="journal-chip plan-chip">plan</span>` : ""}
+          </div>
+          <button class="journal-edit-btn" onclick="openNote(${d})">Edit</button>
+        </div>
+        <div class="journal-text">${safe}</div>
+      </div>`;
+    } else {
+      html += `<div class="journal-empty${isToday ? " today" : ""}${
+        fut ? " future" : ""
+      }">
+        <span class="journal-day-num dim">${d}</span>
+        <span class="journal-dow dim">${dow}</span>
+        ${isToday ? `<span class="journal-chip today-chip">today</span>` : ""}
+        ${fut ? `<span class="journal-chip plan-chip">plan ahead</span>` : ""}
+        <button class="journal-add-btn" onclick="openNote(${d})">+ Add note</button>
+      </div>`;
+    }
+  }
+  journal.innerHTML =
+    html ||
+    `<div class="journal-empty-state">No entries yet. Tap any day to write.</div>`;
+}
 
 // ── HABIT CRUD ────────────────────────────────────────────────────────────────
 
@@ -1863,6 +1977,7 @@ function showView(name) {
   document.getElementById("nav-" + name).classList.add("active");
   if (name === "progress") renderProgressView();
   if (name === "calories") renderCalorieView();
+  if (name === "notes") renderNotesView();
 }
 
 function toggleSidebar() {
@@ -1968,6 +2083,7 @@ Object.assign(window, {
   openNote,
   saveNote,
   openMonthNote,
+  onMonthNoteInput,
   openAddHabit,
   openEditHabit,
   saveHabit,

@@ -275,15 +275,84 @@ button, .chk, .daybtn, .notebtn, .habit-btn {
 }
 .notebtn:hover:not(.future){border-color:var(--purple);background:rgba(155,109,255,.1);color:var(--purple);opacity:1}
 .notebtn.has-note{border-color:var(--purple);background:rgba(155,109,255,.1);color:var(--purple);opacity:1}
-.notebtn.future{opacity:.08;cursor:default;pointer-events:none}
+/* Future notebtn — still clickable for planning */
+.notebtn.future{opacity:.4}
 
-/* Dashboard sticky month note */
-.dashboard-sticky{
-  margin-top:10px;color:var(--text);background:linear-gradient(180deg, rgba(255,255,255,0.02), transparent);
-  padding:8px 12px;border-radius:8px;font-size:13px;max-width:420px;cursor:pointer;white-space:pre-wrap;
-  border:1px solid var(--border2);
+/* ── DAY NOTE BANNER (single-day view) ── */
+.day-note-banner{margin-bottom:14px;border-radius:var(--radius);overflow:hidden}
+.day-note-banner.hidden{display:none}
+.day-note-banner.dnb-has-note{
+  background:var(--surface2);border:1px solid var(--purple);
+  padding:12px 14px;display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;
 }
-.dashboard-sticky.hidden{display:none}
+.dnb-label{
+  font-family:var(--mono);font-size:9px;text-transform:uppercase;letter-spacing:.1em;
+  color:var(--purple);width:100%;margin-bottom:4px;
+}
+.dnb-text{flex:1;font-size:13px;line-height:1.6;white-space:pre-wrap;color:var(--text);word-break:break-word}
+.dnb-edit{
+  flex-shrink:0;font-size:11px;padding:4px 10px;border-radius:var(--radius-sm);
+  border:1px solid rgba(155,109,255,.35);color:var(--purple);background:rgba(155,109,255,.08);
+  transition:all .12s;
+}
+.dnb-edit:hover{background:rgba(155,109,255,.18)}
+.day-note-banner.dnb-empty{padding:2px 0}
+.dnb-add{
+  font-size:12px;color:var(--text-dim);padding:6px 2px;
+  border-bottom:1px dashed var(--border2);width:100%;text-align:left;transition:color .12s;
+}
+.dnb-add:hover{color:var(--purple)}
+
+/* ── NOTES VIEW ── */
+.month-note-wrap{margin-bottom:4px}
+.month-note-textarea{
+  width:100%;min-height:120px;resize:vertical;padding:14px;
+  font-size:13px;line-height:1.7;border-radius:var(--radius);
+  background:var(--surface2);border:1px solid var(--border2);
+  color:var(--text);transition:border-color .15s;
+}
+.month-note-textarea:focus{border-color:var(--purple)}
+.month-note-hint{font-size:10px;color:var(--text-dim);padding:6px 2px 20px;font-style:italic}
+
+/* Journal list */
+.notes-journal{display:flex;flex-direction:column;gap:8px;padding-bottom:40px}
+
+.journal-card{
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--radius);padding:14px 16px;
+}
+.journal-card.today{border-color:rgba(155,109,255,.35);background:rgba(155,109,255,.04)}
+.journal-card-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.journal-date{display:flex;align-items:center;gap:8px}
+.journal-day-num{font-family:var(--mono);font-size:15px;font-weight:500;color:var(--text)}
+.journal-dow{font-size:11px;color:var(--text-dim)}
+.journal-chip{
+  font-family:var(--mono);font-size:9px;padding:2px 7px;border-radius:8px;
+  text-transform:uppercase;letter-spacing:.06em;
+}
+.today-chip{background:rgba(155,109,255,.12);color:var(--purple);border:1px solid rgba(155,109,255,.3)}
+.plan-chip{background:var(--blue-bg);color:var(--blue);border:1px solid rgba(77,158,255,.3)}
+.journal-edit-btn{
+  font-size:11px;padding:4px 10px;border-radius:var(--radius-sm);
+  border:1px solid var(--border2);color:var(--text-dim);transition:all .12s;
+}
+.journal-edit-btn:hover{color:var(--text);border-color:var(--border2);background:var(--surface3)}
+.journal-text{font-size:13px;line-height:1.7;color:var(--text-mid);white-space:pre-wrap;word-break:break-word}
+
+.journal-empty{
+  display:flex;align-items:center;gap:10px;padding:9px 12px;
+  border-radius:var(--radius-sm);border:1px solid transparent;
+  transition:border-color .12s;
+}
+.journal-empty.today{border-color:rgba(155,109,255,.2);background:rgba(155,109,255,.03)}
+.journal-empty .journal-add-btn{
+  margin-left:auto;font-size:11px;padding:4px 10px;border-radius:var(--radius-sm);
+  border:1px solid var(--border2);color:var(--text-dim);transition:all .12s;flex-shrink:0;
+}
+.journal-empty .journal-add-btn:hover{color:var(--purple);border-color:rgba(155,109,255,.35)}
+.journal-empty.future .journal-add-btn{color:var(--blue);border-color:rgba(77,158,255,.3)}
+.journal-empty.future .journal-add-btn:hover{background:var(--blue-bg)}
+.journal-empty-state{color:var(--text-dim);font-size:13px;padding:24px 0;text-align:center}
 
 /* ── SECTION DIVIDER IN TABLE ── */
 .row-section td{
