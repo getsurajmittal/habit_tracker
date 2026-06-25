@@ -948,37 +948,15 @@ function render() {
 function renderLabels() {
   const label = `${MONTH_NAMES[viewMonth]} ${viewYear}`;
   document.getElementById("sidebarMonth").textContent = label;
-  document.getElementById("gridMonth").textContent = label;
+  document.getElementById(
+    "gridMonth"
+  ).textContent = `${MONTH_NAMES[viewMonth]} ${viewDay}, ${viewYear}`;
   document.getElementById("progressMonth").textContent = label;
   const calEl = document.getElementById("calorieMonth");
   if (calEl)
     calEl.textContent = `${MONTH_NAMES[viewMonth]} ${viewDay}, ${viewYear}`;
-  // Show month note preview in sidebar
-  const noteEl = document.getElementById("sidebarMonthNote");
-  if (noteEl) {
-    if (state.globalNote && state.globalNote.trim()) {
-      const firstLine = state.globalNote.split("\n")[0];
-      noteEl.textContent =
-        firstLine.length > 40 ? firstLine.slice(0, 40) + "…" : firstLine;
-      noteEl.title = state.globalNote;
-      noteEl.classList.remove("empty");
-    } else {
-      noteEl.textContent = "(no month note)";
-      noteEl.title = "";
-      noteEl.classList.add("empty");
-    }
-  }
-  // dashboard sticky note (main area)
-  const dashNote = document.getElementById("dashboardStickyNote");
-  if (dashNote) {
-    if (state.globalNote && state.globalNote.trim()) {
-      dashNote.textContent = state.globalNote;
-      dashNote.classList.remove("hidden");
-    } else {
-      dashNote.textContent = "";
-      dashNote.classList.add("hidden");
-    }
-  }
+  const notesMonthEl = document.getElementById("notesMonth");
+  if (notesMonthEl) notesMonthEl.textContent = label;
 }
 
 // ── GRID ──────────────────────────────────────────────────────────────────────
@@ -2016,6 +1994,34 @@ function toggleSidebar() {
   // Desktop: collapse/expand
   sidebar.classList.toggle("collapsed");
 }
+
+// Swipe-to-open sidebar on mobile
+(function () {
+  let _sx = 0,
+    _sy = 0;
+  document.addEventListener(
+    "touchstart",
+    (e) => {
+      _sx = e.touches[0].clientX;
+      _sy = e.touches[0].clientY;
+    },
+    { passive: true }
+  );
+  document.addEventListener(
+    "touchend",
+    (e) => {
+      if (!e.changedTouches.length || window.innerWidth > 640) return;
+      const dx = e.changedTouches[0].clientX - _sx;
+      const dy = e.changedTouches[0].clientY - _sy;
+      if (Math.abs(dy) > 80) return; // too vertical
+      const sidebar = document.getElementById("sidebar");
+      const isOpen = sidebar.classList.contains("mobile-open");
+      if (!isOpen && _sx < 32 && dx > 60) toggleSidebar(); // swipe right from edge
+      if (isOpen && dx < -60) toggleSidebar(); // swipe left to close
+    },
+    { passive: true }
+  );
+})();
 
 // ── MODALS ────────────────────────────────────────────────────────────────────
 
