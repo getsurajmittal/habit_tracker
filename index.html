@@ -163,9 +163,9 @@
           <div class="pbar-wrap phero-bar"><div class="pbar-fill amber-fill" id="pTodayBar"></div></div>
         </div>
         <div class="phero">
-          <div class="phero-label">Month Overall</div>
+          <div class="phero-label">Success Rate</div>
           <div class="phero-val green" id="pOverall">0%</div>
-          <div class="phero-sub">all habits &amp; days so far</div>
+          <div class="phero-sub">days marked successful</div>
           <div class="pbar-wrap phero-bar"><div class="pbar-fill green-fill" id="pOverallBar"></div></div>
         </div>
       </div>
@@ -224,8 +224,8 @@
         <span class="hl-item"><span class="hl-dot cal"></span> Calories logged</span>
       </div>
 
-      <!-- Per-habit bars -->
-      <div class="section-head" id="habitBarsHead">Habit Performance</div>
+      <!-- Per-habit streaks -->
+      <div class="section-head" id="habitBarsHead">Habit Streaks</div>
       <div class="habit-bars" id="habitBars"></div>
     </div>
 
@@ -281,7 +281,7 @@
 
       <div class="cal-add-form">
         <input class="form-input" id="calFoodInput" type="text"
-          placeholder="Food name (e.g. chyawanprash, dal rice…)" maxlength="80"
+          placeholder="Food name (e.g. chyawanprash, dal rice…)"
           oninput="onFoodInputChange()"
           onkeydown="if(event.key==='Enter'){triggerAIFromFoodInput();event.preventDefault()}">
         <button class="btn-ghost cal-ai-btn" onclick="triggerAIFromFoodInput()" title="Ask AI to estimate calories">&#x26A1;</button>
@@ -388,10 +388,6 @@
     <div class="form-group">
       <label class="form-label">Habit name</label>
       <input class="form-input" id="habitNameInput" type="text" placeholder="e.g. Morning run" maxlength="60">
-    </div>
-    <div class="form-group">
-      <label class="form-label">Category (optional)</label>
-      <input class="form-input" id="habitCatInput" type="text" placeholder="e.g. Morning, Health, Evening" maxlength="30">
     </div>
     <div id="habitModalError" class="setup-error hidden"></div>
     <div class="modal-actions">

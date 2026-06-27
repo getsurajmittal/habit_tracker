@@ -674,7 +674,7 @@ button, .chk, .daybtn, .notebtn, .habit-btn {
 }
 .cal-entry:hover{border-color:var(--border2)}
 .cal-entry-left{display:flex;flex-direction:column;gap:2px;flex:1;min-width:0}
-.cal-entry-food{font-size:14px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cal-entry-food{font-size:14px;font-weight:500;white-space:normal;word-break:break-word}
 .cal-entry-time{font-family:var(--mono);font-size:10px;color:var(--text-dim)}
 .cal-entry-right{display:flex;align-items:center;gap:10px;flex-shrink:0}
 .cal-entry-cal{font-family:var(--mono);font-size:14px;font-weight:500;color:var(--amber);white-space:nowrap}

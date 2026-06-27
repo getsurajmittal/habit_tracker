@@ -1079,9 +1079,7 @@ function renderGridBody() {
   // Helper: render one habit row
   const habitRow = (habit) => {
     const tid = habit.id;
-    let row = `<tr><td class="td-task">${habit.name}`;
-    if (habit.cat) row += `<span class="td-cat">${habit.cat}</span>`;
-    row += `</td>`;
+    let row = `<tr><td class="td-task">${habit.name}</td>`;
     days.forEach((d) => {
       const raw = state.checks[d]?.[tid];
       const checked = normalizeCheckValue(raw);
@@ -1110,24 +1108,6 @@ function renderGridBody() {
     return row;
   };
 
-  // Helper: render category-grouped habits
-  const renderGroup = (list) => {
-    const catMap = {};
-    list.forEach((h) => {
-      const c = h.cat || "General";
-      if (!catMap[c]) catMap[c] = [];
-      catMap[c].push(h);
-    });
-    return Object.entries(catMap)
-      .map(
-        ([cat, hs]) =>
-          `<tr class="row-section"><td class="section-name" colspan="${
-            days.length + 1
-          }">${cat}</td></tr>` + hs.map(habitRow).join("")
-      )
-      .join("");
-  };
-
   let html = "";
 
   if (unmarked.length === 0 && marked.length > 0) {
@@ -1135,7 +1115,7 @@ function renderGridBody() {
       days.length + 1
     }">✦ All done for today</td></tr>`;
   } else {
-    html += renderGroup(unmarked);
+    html += unmarked.map(habitRow).join("");
   }
 
   if (marked.length > 0) {
@@ -1378,7 +1358,6 @@ function openAddHabit() {
   editingHabitId = null;
   document.getElementById("habitModalTitle").textContent = "Add Habit";
   document.getElementById("habitNameInput").value = "";
-  document.getElementById("habitCatInput").value = "";
   document.getElementById("habitModalError").classList.add("hidden");
   openModal("habitModal");
   setTimeout(() => document.getElementById("habitNameInput").focus(), 60);
@@ -1390,7 +1369,6 @@ function openEditHabit(id) {
   editingHabitId = id;
   document.getElementById("habitModalTitle").textContent = "Edit Habit";
   document.getElementById("habitNameInput").value = h.name;
-  document.getElementById("habitCatInput").value = h.cat || "";
   document.getElementById("habitModalError").classList.add("hidden");
   openModal("habitModal");
   setTimeout(() => document.getElementById("habitNameInput").focus(), 60);
@@ -1398,7 +1376,6 @@ function openEditHabit(id) {
 
 async function saveHabit() {
   const name = document.getElementById("habitNameInput").value.trim();
-  const cat = document.getElementById("habitCatInput").value.trim();
   const errEl = document.getElementById("habitModalError");
 
   if (!name) {
@@ -1410,13 +1387,11 @@ async function saveHabit() {
     const h = state.habits.find((x) => x.id === editingHabitId);
     if (h) {
       h.name = name;
-      h.cat = cat;
     }
   } else {
     state.habits.push({
       id: uid(),
       name,
-      cat,
       order: state.habits.length,
     });
   }
@@ -1554,15 +1529,10 @@ function renderHabitsList() {
       <div class="habit-item-left">
         <span class="habit-drag" title="Hold &amp; drag to reorder">⠿</span>
         <span class="habit-name">${h.name}</span>
-        ${h.cat ? `<span class="habit-cat">${h.cat}</span>` : ""}
       </div>
       <div class="habit-actions">
-        <button class="habit-btn" onclick="openEditHabit('${
-          h.id
-        }')" title="Edit">✎</button>
-        <button class="habit-btn del" onclick="deleteHabit('${
-          h.id
-        }')" title="Delete">✕</button>
+        <button class="habit-btn" onclick="openEditHabit('${h.id}')" title="Edit">✎</button>
+        <button class="habit-btn del" onclick="deleteHabit('${h.id}')" title="Delete">✕</button>
       </div>
     </div>`
     )
@@ -1587,11 +1557,22 @@ function renderStats() {
   ).length;
   document.getElementById("hSucc").textContent = succDays;
 
-  // Streak
+  // Streak — based on previous day; if today unmarked, count from yesterday
   let streak = 0;
-  for (let d = viewDay; d >= 1; d--) {
-    if (state.successDays[d] === "success") streak++;
-    else break;
+  const _isViewToday =
+    viewYear === CURRENT_YEAR &&
+    viewMonth === CURRENT_MONTH &&
+    viewDay === CURRENT_DAY;
+  const _todayV = state.successDays[viewDay];
+  if (_isViewToday && _todayV === "fail") {
+    streak = 0;
+  } else {
+    const _sStart =
+      _isViewToday && _todayV !== "success" ? viewDay - 1 : viewDay;
+    for (let d = _sStart; d >= 1; d--) {
+      if (state.successDays[d] === "success") streak++;
+      else break;
+    }
   }
   document.getElementById("hStreak").textContent = streak;
 
@@ -1627,19 +1608,16 @@ function renderProgressView() {
   )} of ${daysIn}`;
   document.getElementById("monthPct").textContent = mPct + "%";
 
-  // Overall
-  let total = 0,
-    done = 0;
+  // Success rate = success days / days passed so far
+  let succRateCount = 0;
   for (let d = 1; d <= visibleDays; d++) {
-    const dm = state.checks[d] || {};
-    habits.forEach((h) => {
-      total++;
-      if (isDoneValue(dm[h.id])) done++;
-    });
+    if (state.successDays[d] === "success") succRateCount++;
   }
-  const overallPct = total ? Math.round((done / total) * 100) : 0;
-  document.getElementById("pOverall").textContent = overallPct + "%";
-  document.getElementById("pOverallBar").style.width = overallPct + "%";
+  const succRatePct = visibleDays
+    ? Math.round((succRateCount / visibleDays) * 100)
+    : 0;
+  document.getElementById("pOverall").textContent = succRatePct + "%";
+  document.getElementById("pOverallBar").style.width = succRatePct + "%";
 
   // Today
   const todayMap = state.checks[viewDay] || {};
@@ -1721,13 +1699,24 @@ function renderProgressView() {
   const pCalAvgEl = document.getElementById("pCalAvg");
   if (pCalAvgEl) pCalAvgEl.textContent = calAvg > 0 ? String(calAvg) : "\u2014";
 
-  // Streak
+  // Streak — based on previous day; if today unmarked count from yesterday; fail resets to 0
   let streak = 0,
     bestStreak = 0,
     cur = 0;
-  for (let d = viewDay; d >= 1; d--) {
-    if (state.successDays[d] === "success") streak++;
-    else break;
+  const isViewingToday =
+    viewYear === CURRENT_YEAR &&
+    viewMonth === CURRENT_MONTH &&
+    viewDay === CURRENT_DAY;
+  const todayVerdict = state.successDays[viewDay];
+  if (isViewingToday && todayVerdict === "fail") {
+    streak = 0;
+  } else {
+    const streakStart =
+      isViewingToday && todayVerdict !== "success" ? viewDay - 1 : viewDay;
+    for (let d = streakStart; d >= 1; d--) {
+      if (state.successDays[d] === "success") streak++;
+      else break;
+    }
   }
   for (let d = 1; d <= visibleDays; d++) {
     if (state.successDays[d] === "success") {
@@ -1778,60 +1767,46 @@ function renderProgressView() {
   }
   document.getElementById("heatmap").innerHTML = hmHtml;
 
-  // Per-habit bars — sorted ascending (weakest first) so user sees what needs work
-  const habitStats = habits.map((h) => {
-    let hdone = 0;
-    for (let d = 1; d <= visibleDays; d++) {
-      if (isDoneValue(state.checks[d]?.[h.id])) hdone++;
+  // Per-habit streaks — consecutive days each habit was done
+  const isViewDay =
+    viewYear === CURRENT_YEAR &&
+    viewMonth === CURRENT_MONTH &&
+    viewDay === CURRENT_DAY;
+  const habitStreaks = habits.map((h) => {
+    const todayDone = isDoneValue(state.checks[viewDay]?.[h.id]);
+    const startDay = isViewDay && !todayDone ? viewDay - 1 : viewDay;
+    let hstreak = 0;
+    for (let d = startDay; d >= 1; d--) {
+      if (isDoneValue(state.checks[d]?.[h.id])) hstreak++;
+      else break;
     }
-    const pct = visibleDays ? Math.round((hdone / visibleDays) * 100) : 0;
-    return { h, hdone, pct };
+    return { h, hstreak };
   });
-  habitStats.sort((a, b) => a.pct - b.pct);
+  habitStreaks.sort((a, b) => b.hstreak - a.hstreak);
 
   const headEl = document.getElementById("habitBarsHead");
   if (headEl) {
-    const allStrong = habitStats.every((s) => s.pct >= 80);
-    headEl.innerHTML = allStrong
-      ? `<span class="sh-icon">\u2736</span> Habit Performance <span class="section-hint">\u2714 all on track</span>`
-      : `<span class="sh-icon">\u2736</span> Habit Performance <span class="section-hint">weakest first, by category</span>`;
+    headEl.innerHTML = `<span class="sh-icon">\u26A1</span> Habit Streaks <span class="section-hint">consecutive days done</span>`;
   }
 
-  // Group by category, each group sorted ascending by pct, categories sorted by avg pct
-  const catMap = {};
-  habitStats.forEach((s) => {
-    const cat = s.h.cat || "";
-    if (!catMap[cat]) catMap[cat] = [];
-    catMap[cat].push(s);
-  });
-  const catGroups = Object.entries(catMap).map(([cat, stats]) => ({
-    cat,
-    stats: stats.sort((a, b) => a.pct - b.pct),
-    avg: Math.round(stats.reduce((sum, x) => sum + x.pct, 0) / stats.length),
-  }));
-  catGroups.sort((a, b) => a.avg - b.avg);
-  const showCatHeads =
-    catGroups.length > 1 || (catGroups[0] && catGroups[0].cat !== "");
-
+  const maxStreak = Math.max(...habitStreaks.map((s) => s.hstreak), 1);
   let barsHtml = "";
-  catGroups.forEach(({ cat, stats, avg }) => {
-    if (showCatHeads && cat) {
-      const cColor =
-        avg < 50 ? "var(--red)" : avg < 80 ? "var(--amber)" : "var(--green)";
-      barsHtml += `<div class="hbar-cat-head"><span class="hbar-cat-name">${cat}</span><span class="hbar-cat-avg" style="color:${cColor}">${avg}% avg</span></div>`;
-    }
-    stats.forEach(({ h, hdone, pct }) => {
-      const color =
-        pct < 50 ? "var(--red)" : pct < 80 ? "var(--amber)" : "var(--green)";
-      barsHtml += `<div class="hbar-row">
-        <div class="hbar-name" title="${h.name}">${h.name}</div>
-        <div class="hbar-track"><div class="hbar-fill" style="width:${pct}%;background:${color}"></div></div>
-        <div class="hbar-meta">
-          <span class="hbar-pct" style="color:${color}">${pct}%</span>
-          <span class="hbar-count">${hdone}/${visibleDays}d</span>
-        </div>
-      </div>`;
-    });
+  habitStreaks.forEach(({ h, hstreak }) => {
+    const color =
+      hstreak === 0
+        ? "var(--red)"
+        : hstreak < 3
+        ? "var(--amber)"
+        : "var(--green)";
+    const barWidth = Math.round((hstreak / maxStreak) * 100);
+    barsHtml += `<div class="hbar-row">
+      <div class="hbar-name" title="${h.name}">${h.name}</div>
+      <div class="hbar-track"><div class="hbar-fill" style="width:${barWidth}%;background:${color}"></div></div>
+      <div class="hbar-meta">
+        <span class="hbar-pct" style="color:${color}">${hstreak}</span>
+        <span class="hbar-count">day${hstreak !== 1 ? "s" : ""}</span>
+      </div>
+    </div>`;
   });
   document.getElementById("habitBars").innerHTML = barsHtml;
 }
