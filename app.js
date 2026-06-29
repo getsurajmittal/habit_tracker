@@ -1277,11 +1277,14 @@ function toggleCheck(day, habitId, btn) {
   if (!cur && next) {
     // transitioning unmarked → marked for the first time
     if (!state.markOrder[day]) state.markOrder[day] = [];
-    if (!state.markOrder[day].includes(habitId)) state.markOrder[day].push(habitId);
+    if (!state.markOrder[day].includes(habitId))
+      state.markOrder[day].push(habitId);
   } else if (!next) {
     // transitioning marked → unmarked
     if (state.markOrder[day]) {
-      state.markOrder[day] = state.markOrder[day].filter((id) => id !== habitId);
+      state.markOrder[day] = state.markOrder[day].filter(
+        (id) => id !== habitId
+      );
     }
   }
 
