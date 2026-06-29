@@ -389,6 +389,28 @@
       <label class="form-label">Habit name</label>
       <input class="form-input" id="habitNameInput" type="text" placeholder="e.g. Morning run" maxlength="60">
     </div>
+    <div class="form-group">
+      <label class="form-label">Active days <span class="form-hint">&mdash; leave all off = every day</span></label>
+      <div class="dow-toggles" id="habitDowToggles">
+        <button type="button" class="dow-btn" data-dow="1" onclick="toggleDowBtn(this)">Mon</button>
+        <button type="button" class="dow-btn" data-dow="2" onclick="toggleDowBtn(this)">Tue</button>
+        <button type="button" class="dow-btn" data-dow="3" onclick="toggleDowBtn(this)">Wed</button>
+        <button type="button" class="dow-btn" data-dow="4" onclick="toggleDowBtn(this)">Thu</button>
+        <button type="button" class="dow-btn" data-dow="5" onclick="toggleDowBtn(this)">Fri</button>
+        <button type="button" class="dow-btn" data-dow="6" onclick="toggleDowBtn(this)">Sat</button>
+        <button type="button" class="dow-btn" data-dow="0" onclick="toggleDowBtn(this)">Sun</button>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-half">
+        <label class="form-label">Start date <span class="form-hint">optional</span></label>
+        <input class="form-input" id="habitStartDate" type="date">
+      </div>
+      <div class="form-half">
+        <label class="form-label">End date <span class="form-hint">optional</span></label>
+        <input class="form-input" id="habitEndDate" type="date">
+      </div>
+    </div>
     <div id="habitModalError" class="setup-error hidden"></div>
     <div class="modal-actions">
       <button class="btn-ghost" onclick="closeModal('habitModal')">Cancel</button>

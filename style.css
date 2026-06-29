@@ -567,7 +567,18 @@ button, .chk, .daybtn, .notebtn, .habit-btn {
 
 .form-group{margin-bottom:14px}
 .form-label{display:block;font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px}
+.form-hint{font-size:10px;color:var(--text-dim);text-transform:none;letter-spacing:0;font-weight:400}
+.form-row{display:flex;gap:10px}
+.form-half{flex:1;min-width:0}
 .form-input{width:100%;padding:9px 12px;font-size:13px;border-radius:var(--radius-sm)}
+/* Day-of-week toggles */
+.dow-toggles{display:flex;gap:5px;flex-wrap:wrap;margin-top:4px}
+.dow-btn{padding:5px 9px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text-dim);font-size:11px;font-family:var(--mono);cursor:pointer;transition:all .15s}
+.dow-btn.active{background:var(--green-bg);color:var(--green);border-color:var(--green);font-weight:600}
+/* Schedule badge in habits list */
+.habit-sched{font-size:10px;color:var(--purple);margin-left:6px;opacity:.85}
+/* Inactive (not scheduled) table cell */
+.td-inactive{text-align:center;background:repeating-linear-gradient(45deg,transparent,transparent 3px,rgba(255,255,255,.02) 3px,rgba(255,255,255,.02) 6px);opacity:.25}
 
 /* Day modal content */
 .day-modal-tasks{display:flex;flex-direction:column;gap:4px;margin-bottom:16px;max-height:300px;overflow-y:auto}

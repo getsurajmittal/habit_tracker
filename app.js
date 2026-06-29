@@ -402,7 +402,7 @@ Use typical Indian household or standard restaurant serving sizes. Give a rough 
 Reference sizes: 1 chapati ~80 kcal, 1 bowl dal ~150 kcal, 1 tsp chyawanprash ~40 kcal,
 1 cup cooked rice ~200 kcal, 1 glass milk ~150 kcal, 1 banana ~90 kcal, 1 egg ~78 kcal.
 Return ONLY valid JSON, no markdown, no extra text:
-{"calories": 250, "description": "e.g. 1 McAloo Tikki burger (standard)"}
+{"food": "clean food name e.g. Dal Chawal", "calories": 250, "description": "serving size detail e.g. 1 katori dal + 1 cup rice"}
 
 Food: "${food}"`;
   const raw = await callGemini(prompt);
@@ -488,7 +488,8 @@ function _showAIChip(result) {
   // Reset any error styling from a previous error
   text.style.color = "";
   chip.style.borderColor = "";
-  text.textContent = `~${result.calories} kcal \u00b7 ${result.description}`;
+  const foodLabel = result.food ? `${result.food} \u2014 ` : "";
+  text.textContent = `${foodLabel}~${result.calories}\u202fkcal \u00b7 ${result.description}`;
   wrap.classList.remove("hidden");
   chip.classList.remove("hidden");
 }
@@ -516,10 +517,34 @@ function _hideAISuggestion() {
 
 function acceptAISuggestion() {
   if (!aiSuggestionData) return;
-  document.getElementById("calAmtInput").value = aiSuggestionData.calories;
+  // Use AI food name (falls back to what user typed)
+  const food =
+    aiSuggestionData.food ||
+    (document.getElementById("calFoodInput")?.value || "").trim() ||
+    "Food item";
+  const cal = aiSuggestionData.calories;
+  if (!food || !cal || cal <= 0) return;
+
+  if (!state.calories[viewDay]) state.calories[viewDay] = [];
+  const now = new Date();
+  const time = `${String(now.getHours()).padStart(2, "0")}:${String(
+    now.getMinutes()
+  ).padStart(2, "0")}`;
+  state.calories[viewDay].push({ id: uid(), food, cal, time });
+
+  // Clear form fields
+  const foodEl = document.getElementById("calFoodInput");
+  const amtEl = document.getElementById("calAmtInput");
+  if (foodEl) {
+    foodEl.value = "";
+    foodEl.focus();
+  }
+  if (amtEl) amtEl.value = "";
   aiSuggestionData = null;
   _hideAISuggestion();
-  document.getElementById("calAmtInput").focus();
+
+  renderCalorieView();
+  scheduleSave();
 }
 
 function dismissAISuggestion() {
@@ -1043,6 +1068,53 @@ function renderGridHead() {
   document.getElementById("hthead").innerHTML = html;
 }
 
+// ── HABIT SCHEDULING HELPERS ─────────────────────────────────────────────────
+
+// Returns true if the habit should appear on the given date
+function isHabitActiveOnDate(habit, year, month, day) {
+  // Day-of-week filter (0=Sun … 6=Sat, matches JS Date.getDay)
+  if (habit.days && habit.days.length > 0) {
+    const dow = new Date(year, month, day).getDay();
+    if (!habit.days.includes(dow)) return false;
+  }
+  // Start date filter
+  if (habit.startDate) {
+    const d = new Date(year, month, day);
+    const sd = new Date(habit.startDate + "T00:00:00");
+    if (d < sd) return false;
+  }
+  // End date filter
+  if (habit.endDate) {
+    const d = new Date(year, month, day);
+    const ed = new Date(habit.endDate + "T00:00:00");
+    if (d > ed) return false;
+  }
+  return true;
+}
+
+function toggleDowBtn(btn) {
+  btn.classList.toggle("active");
+}
+
+function setHabitDaysUI(days) {
+  document.querySelectorAll("#habitDowToggles .dow-btn").forEach((btn) => {
+    btn.classList.toggle(
+      "active",
+      !!(days && days.includes(parseInt(btn.dataset.dow)))
+    );
+  });
+}
+
+function getSelectedHabitDays() {
+  const active = [];
+  document
+    .querySelectorAll("#habitDowToggles .dow-btn.active")
+    .forEach((btn) => {
+      active.push(parseInt(btn.dataset.dow));
+    });
+  return active.length === 0 || active.length === 7 ? null : active;
+}
+
 function renderGridBody() {
   const habits = state.habits;
   if (!habits.length) {
@@ -1073,14 +1145,22 @@ function renderGridBody() {
     const v = normalizeCheckValue(viewDayMap[h.id]);
     return v === "tick" || v === "cross" || v === "dash";
   };
-  const unmarked = habits.filter((h) => !_isMarked(h));
-  const marked = habits.filter((h) => _isMarked(h));
+  // In single-day view only show habits scheduled for that day
+  const sourceHabits = singleDayView
+    ? habits.filter((h) => isHabitActiveOnDate(h, viewYear, viewMonth, viewDay))
+    : habits;
+  const unmarked = sourceHabits.filter((h) => !_isMarked(h));
+  const marked = sourceHabits.filter((h) => _isMarked(h));
 
   // Helper: render one habit row
   const habitRow = (habit) => {
     const tid = habit.id;
     let row = `<tr><td class="td-task">${habit.name}</td>`;
     days.forEach((d) => {
+      if (!isHabitActiveOnDate(habit, viewYear, viewMonth, d)) {
+        row += `<td class="td-inactive" title="Not scheduled"></td>`;
+        return;
+      }
       const raw = state.checks[d]?.[tid];
       const checked = normalizeCheckValue(raw);
       const future = isFuture(d);
@@ -1358,6 +1438,9 @@ function openAddHabit() {
   editingHabitId = null;
   document.getElementById("habitModalTitle").textContent = "Add Habit";
   document.getElementById("habitNameInput").value = "";
+  setHabitDaysUI(null);
+  document.getElementById("habitStartDate").value = "";
+  document.getElementById("habitEndDate").value = "";
   document.getElementById("habitModalError").classList.add("hidden");
   openModal("habitModal");
   setTimeout(() => document.getElementById("habitNameInput").focus(), 60);
@@ -1369,6 +1452,9 @@ function openEditHabit(id) {
   editingHabitId = id;
   document.getElementById("habitModalTitle").textContent = "Edit Habit";
   document.getElementById("habitNameInput").value = h.name;
+  setHabitDaysUI(h.days || null);
+  document.getElementById("habitStartDate").value = h.startDate || "";
+  document.getElementById("habitEndDate").value = h.endDate || "";
   document.getElementById("habitModalError").classList.add("hidden");
   openModal("habitModal");
   setTimeout(() => document.getElementById("habitNameInput").focus(), 60);
@@ -1376,6 +1462,9 @@ function openEditHabit(id) {
 
 async function saveHabit() {
   const name = document.getElementById("habitNameInput").value.trim();
+  const days = getSelectedHabitDays();
+  const startDate = document.getElementById("habitStartDate").value || null;
+  const endDate = document.getElementById("habitEndDate").value || null;
   const errEl = document.getElementById("habitModalError");
 
   if (!name) {
@@ -1387,11 +1476,17 @@ async function saveHabit() {
     const h = state.habits.find((x) => x.id === editingHabitId);
     if (h) {
       h.name = name;
+      h.days = days;
+      h.startDate = startDate;
+      h.endDate = endDate;
     }
   } else {
     state.habits.push({
       id: uid(),
       name,
+      days,
+      startDate,
+      endDate,
       order: state.habits.length,
     });
   }
@@ -1523,19 +1618,30 @@ function renderHabitsList() {
     return;
   }
   el.innerHTML = state.habits
-    .map(
-      (h) => `
+    .map((h) => {
+      const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+      const schedParts = [];
+      if (h.days && h.days.length > 0 && h.days.length < 7) {
+        const ordered = [1, 2, 3, 4, 5, 6, 0].filter((d) => h.days.includes(d));
+        schedParts.push(ordered.map((d) => DOW[d]).join(", "));
+      }
+      if (h.startDate) schedParts.push("from " + h.startDate);
+      if (h.endDate) schedParts.push("until " + h.endDate);
+      const schedBadge = schedParts.length
+        ? `<span class="habit-sched">${schedParts.join(" · ")}</span>`
+        : "";
+      return `
     <div class="habit-item" data-habit-id="${h.id}">
       <div class="habit-item-left">
         <span class="habit-drag" title="Hold &amp; drag to reorder">⠿</span>
-        <span class="habit-name">${h.name}</span>
+        <span class="habit-name">${h.name}</span>${schedBadge}
       </div>
       <div class="habit-actions">
         <button class="habit-btn" onclick="openEditHabit('${h.id}')" title="Edit">✎</button>
         <button class="habit-btn del" onclick="deleteHabit('${h.id}')" title="Delete">✕</button>
       </div>
-    </div>`
-    )
+    </div>`;
+    })
     .join("");
   _initHabitDrag();
 }
@@ -1547,9 +1653,15 @@ function renderStats() {
   const n = habits.length;
 
   // Viewed day (shows counts for the currently selected day)
+  const todayApplicableStats = habits.filter((h) =>
+    isHabitActiveOnDate(h, viewYear, viewMonth, viewDay)
+  );
   const todayMap = state.checks[viewDay] || {};
-  const todayDone = habits.filter((h) => isDoneValue(todayMap[h.id])).length;
-  document.getElementById("hToday").textContent = `${todayDone}/${n}`;
+  const todayDone = todayApplicableStats.filter((h) =>
+    isDoneValue(todayMap[h.id])
+  ).length;
+  const nApplicable = todayApplicableStats.length;
+  document.getElementById("hToday").textContent = `${todayDone}/${nApplicable}`;
 
   // Success days
   const succDays = Object.values(state.successDays).filter(
@@ -1620,13 +1732,20 @@ function renderProgressView() {
   document.getElementById("pOverallBar").style.width = succRatePct + "%";
 
   // Today
+  const todayApplicable = habits.filter((h) =>
+    isHabitActiveOnDate(h, viewYear, viewMonth, viewDay)
+  );
   const todayMap = state.checks[viewDay] || {};
-  const todayDone = habits.filter((h) => isDoneValue(todayMap[h.id])).length;
-  const todayPct = n ? Math.round((todayDone / n) * 100) : 0;
+  const todayDone = todayApplicable.filter((h) =>
+    isDoneValue(todayMap[h.id])
+  ).length;
+  const nToday = todayApplicable.length;
+  const todayPct = nToday ? Math.round((todayDone / nToday) * 100) : 0;
   document.getElementById("pToday").textContent = todayPct + "%";
   document.getElementById("pTodayBar").style.width = todayPct + "%";
   const pTodaySub = document.getElementById("pTodaySub");
-  if (pTodaySub) pTodaySub.textContent = `${todayDone} of ${n} habits done`;
+  if (pTodaySub)
+    pTodaySub.textContent = `${todayDone} of ${nToday} habits done`;
 
   // Success / fail / unmarked
   const succDays = Object.values(state.successDays).filter(
@@ -1767,16 +1886,19 @@ function renderProgressView() {
   }
   document.getElementById("heatmap").innerHTML = hmHtml;
 
-  // Per-habit streaks — consecutive days each habit was done
+  // Per-habit streaks — consecutive applicable days each habit was done
   const isViewDay =
     viewYear === CURRENT_YEAR &&
     viewMonth === CURRENT_MONTH &&
     viewDay === CURRENT_DAY;
   const habitStreaks = habits.map((h) => {
-    const todayDone = isDoneValue(state.checks[viewDay]?.[h.id]);
-    const startDay = isViewDay && !todayDone ? viewDay - 1 : viewDay;
+    const activeToday = isHabitActiveOnDate(h, viewYear, viewMonth, viewDay);
+    const todayDone = activeToday && isDoneValue(state.checks[viewDay]?.[h.id]);
+    const startDay =
+      isViewDay && activeToday && !todayDone ? viewDay - 1 : viewDay;
     let hstreak = 0;
     for (let d = startDay; d >= 1; d--) {
+      if (!isHabitActiveOnDate(h, viewYear, viewMonth, d)) continue; // skip non-scheduled days
       if (isDoneValue(state.checks[d]?.[h.id])) hstreak++;
       else break;
     }
@@ -2131,6 +2253,7 @@ Object.assign(window, {
   sendQuickChat,
   toggleChat,
   clearChat,
+  toggleDowBtn,
 });
 
 // ── START ─────────────────────────────────────────────────────────────────────
