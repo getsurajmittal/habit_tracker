@@ -14,6 +14,7 @@ let state = {
   notes: {}, // {day: string}
   calories: {}, // {day: [{id, food, cal, time}]}
   calorieGoal: 2000, // daily kcal target
+  markOrder: {}, // {day: [habitId, ...]} — order habits were first marked
 };
 
 // Single month-level note (stored in month doc under `monthNote`)
@@ -212,11 +213,13 @@ async function subscribeToMonth(y, m) {
         state.successDays = data.successDays || {};
         state.notes = data.notes || {};
         state.calories = data.calories || {};
+        state.markOrder = data.markOrder || {};
       } else {
         state.checks = {};
         state.successDays = {};
         state.notes = {};
         state.calories = {};
+        state.markOrder = {};
       }
       render();
       setSyncStatus("synced");
@@ -276,6 +279,7 @@ async function flushSave() {
     successDays: state.successDays,
     notes: state.notes,
     calories: state.calories,
+    markOrder: state.markOrder,
     year: viewYear,
     month: viewMonth + 1,
     updatedAt: Date.now(),
@@ -1150,7 +1154,15 @@ function renderGridBody() {
     ? habits.filter((h) => isHabitActiveOnDate(h, viewYear, viewMonth, viewDay))
     : habits;
   const unmarked = sourceHabits.filter((h) => !_isMarked(h));
-  const marked = sourceHabits.filter((h) => _isMarked(h));
+  // Sort marked habits by the order they were first marked (not drag order)
+  const _markOrderDay = state.markOrder?.[viewDay] || [];
+  const marked = sourceHabits
+    .filter((h) => _isMarked(h))
+    .sort((a, b) => {
+      const ai = _markOrderDay.indexOf(a.id);
+      const bi = _markOrderDay.indexOf(b.id);
+      return (ai === -1 ? 9999 : ai) - (bi === -1 ? 9999 : bi);
+    });
 
   // Helper: render one habit row
   const habitRow = (habit) => {
@@ -1260,6 +1272,18 @@ function toggleCheck(day, habitId, btn) {
   else next = undefined;
   if (next) state.checks[day][habitId] = next;
   else delete state.checks[day][habitId];
+
+  // Track marking order: append on first mark, remove on unmark
+  if (!cur && next) {
+    // transitioning unmarked → marked for the first time
+    if (!state.markOrder[day]) state.markOrder[day] = [];
+    if (!state.markOrder[day].includes(habitId)) state.markOrder[day].push(habitId);
+  } else if (!next) {
+    // transitioning marked → unmarked
+    if (state.markOrder[day]) {
+      state.markOrder[day] = state.markOrder[day].filter((id) => id !== habitId);
+    }
+  }
 
   // update button appearance
   btn.classList.remove("tick", "cross", "dash");
