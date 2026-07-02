@@ -650,7 +650,7 @@ async function _fileToDataURL(file) {
   return dataUrl;
 }
 
-async function _resizeImageForUpload(file, maxWidth = 1024, maxHeight = 1024, quality = 0.72) {
+async function _resizeImageForUpload(file, maxWidth = 640, maxHeight = 640, quality = 0.5) {
   const { dataUrl } = await _fileToBase64(file);
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -678,16 +678,8 @@ async function _resizeImageForUpload(file, maxWidth = 1024, maxHeight = 1024, qu
 }
 
 async function uploadBodyPhoto(year, month, day, dataUrl) {
-  if (!storage) return dataUrl;
-  const { ref, uploadString, getDownloadURL } = await import(
-    "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js"
-  );
-  const path = `bodyPhotos/${year}-${String(month + 1).padStart(2, "0")}/${String(
-    day
-  ).padStart(2, "0")}.jpg`;
-  const fileRef = ref(storage, path);
-  await uploadString(fileRef, dataUrl, "data_url");
-  return await getDownloadURL(fileRef);
+  // Persist the resized image inline to avoid storage permission issues.
+  return dataUrl;
 }
 
 function _setPhotoLoading(loading) {
@@ -781,12 +773,15 @@ async function handleBodyPhotoUpload(event) {
 
   try {
     const { dataUrl } = await _resizeImageForUpload(file);
-    const photoUrl = await uploadBodyPhoto(viewYear, viewMonth, viewDay, dataUrl);
+    console.log("Body photo resized, storing inline", {
+      width: dataUrl.length,
+      day: viewDay,
+    });
 
     state.bodyAnalysis[viewDay] = {
       ...(state.bodyAnalysis[viewDay] || {}),
       capturedAt: Date.now(),
-      photoUrl,
+      photo: dataUrl,
     };
     scheduleSave();
     renderBodyView();
@@ -815,7 +810,7 @@ function renderBodyView() {
   const entries = Object.keys(state.bodyAnalysis || {}).length;
   const today = state.bodyAnalysis[viewDay];
   const photos = Object.values(state.bodyAnalysis || {}).filter(
-    (entry) => entry.photoUrl || entry.photo
+    (entry) => entry.photo || entry.photoUrl
   );
   const completedDays = photos.length;
   const percent = Math.round((completedDays / Math.max(1, DAYS_IN_VIEW())) * 100);
@@ -842,7 +837,9 @@ function renderBodyView() {
   } else if (hasPhoto) {
     if (dateEl) dateEl.textContent = `${MONTH_NAMES[viewMonth]} ${viewDay}`;
     if (summaryEl) summaryEl.textContent =
-      "Photo saved. AI analysis has been disabled for progress tracking.";
+      today?.photo
+        ? "Photo saved. Tap a block below to expand."
+        : "Photo URL saved. Tap a block below to expand.";
     if (focusEl) focusEl.textContent = "Focus: View your check-in photos.";
     if (card) card.classList.remove("hidden");
     if (empty) empty.classList.add("hidden");
@@ -862,7 +859,7 @@ function renderBodyView() {
   }
 
   const sorted = Object.entries(state.bodyAnalysis || {})
-    .filter(([, entry]) => entry.photoUrl || entry.photo)
+    .filter(([, entry]) => entry.photo || entry.photoUrl)
     .map(([day, entry]) => ({ day: Number(day), ...entry }))
     .sort((a, b) => b.day - a.day);
 
@@ -870,16 +867,30 @@ function renderBodyView() {
     .map(
       (entry) => {
         const src = entry.photoUrl || entry.photo;
-        return `<button class="body-history-entry" onclick="showBodyHistory(${entry.day})">
-          <div class="bhead">
-            <span class="bday">${MONTH_NAMES[viewMonth]} ${entry.day}</span>
-            <span class="bfocus">${entry.focus || "Check-in"}</span>
+        return `<div class="body-history-entry" onclick="showBodyHistory(${entry.day})">
+          <div class="body-history-entry-header">
+            <div class="bhead">
+              <span class="bday">${MONTH_NAMES[viewMonth]} ${entry.day}</span>
+              <span class="bfocus">${entry.focus || "Check-in"}</span>
+            </div>
+            <button class="body-history-delete" onclick="deleteBodyPhoto(${entry.day}, event)" title="Delete photo">✕</button>
           </div>
           <img src="${src}" alt="Body check-in ${entry.day}" />
-        </button>`;
+        </div>`;
       }
     )
     .join("");
+}
+
+function deleteBodyPhoto(day, event) {
+  event.stopPropagation();
+  if (!confirm(`Delete the photo for ${MONTH_NAMES[viewMonth]} ${day}?`)) return;
+  if (!state.bodyAnalysis || !state.bodyAnalysis[day]) return;
+  delete state.bodyAnalysis[day].photo;
+  delete state.bodyAnalysis[day].photoUrl;
+  if (Object.keys(state.bodyAnalysis[day]).length === 0) delete state.bodyAnalysis[day];
+  scheduleSave();
+  renderBodyView();
 }
 
 function showBodyHistory(day) {
