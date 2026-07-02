@@ -603,7 +603,6 @@
   // Load module script with cache-busting query param to ensure latest JS is fetched.
   (function(){
     const s = document.createElement('script');
-    s.type = 'module';
     s.src = 'app.js?v=' + Date.now();
     s.defer = true;
     document.body.appendChild(s);
