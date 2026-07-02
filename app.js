@@ -3,6 +3,7 @@
 const FB_CONFIG_KEY = "tracker_fb_config";
 
 let db = null;
+let storage = null;
 let MONTH_DOC_ID = "";
 let unsubscribe = null;
 
@@ -13,7 +14,7 @@ let state = {
   successDays: {}, // {day: 'success'|'fail'}
   notes: {}, // {day: string}
   calories: {}, // {day: [{id, food, cal, time}]}
-  bodyAnalysis: {}, // {day: {summary, focus, note, capturedAt}}
+  bodyAnalysis: {}, // {day: {summary, focus, note, capturedAt, photoUrl}}
   calorieGoal: 2000, // daily kcal target
   markOrder: {}, // {day: [habitId, ...]} — order habits were first marked
 };
@@ -128,6 +129,14 @@ async function initFirebase(config) {
 
   const app = initializeApp(config, config.projectId); // unique name prevents re-init error
   db = getFirestore(app);
+  try {
+    const { getStorage } = await import(
+      "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js"
+    );
+    storage = getStorage(app);
+  } catch (err) {
+    console.warn("Firebase Storage not available:", err);
+  }
   // Enable IndexedDB offline persistence where supported
   try {
     const { enableIndexedDbPersistence } = await import(
@@ -625,6 +634,46 @@ async function _fileToDataURL(file) {
   return dataUrl;
 }
 
+async function _resizeImageForUpload(file, maxWidth = 1024, maxHeight = 1024, quality = 0.72) {
+  const { dataUrl } = await _fileToBase64(file);
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const width = img.width;
+      const height = img.height;
+      const ratio = Math.min(1, maxWidth / width, maxHeight / height);
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(width * ratio);
+      canvas.height = Math.round(height * ratio);
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        reject(new Error("Could not create canvas context"));
+        return;
+      }
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      const compressedDataUrl = canvas.toDataURL("image/jpeg", quality);
+      const mimeType = "image/jpeg";
+      const base64 = compressedDataUrl.split(",")[1];
+      resolve({ dataUrl: compressedDataUrl, base64, mimeType });
+    };
+    img.onerror = () => reject(new Error("Failed to load image for resizing"));
+    img.src = dataUrl;
+  });
+}
+
+async function uploadBodyPhoto(year, month, day, dataUrl) {
+  if (!storage) return dataUrl;
+  const { ref, uploadString, getDownloadURL } = await import(
+    "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js"
+  );
+  const path = `bodyPhotos/${year}-${String(month + 1).padStart(2, "0")}/${String(
+    day
+  ).padStart(2, "0")}.jpg`;
+  const fileRef = ref(storage, path);
+  await uploadString(fileRef, dataUrl, "data_url");
+  return await getDownloadURL(fileRef);
+}
+
 function _setPhotoLoading(loading) {
   const btn = document.querySelector(".cal-photo-btn");
   if (!btn) return;
@@ -719,7 +768,7 @@ async function handleBodyPhotoUpload(event) {
   if (indicator) indicator.textContent = "Analyzing photo…";
 
   try {
-    const { base64, mimeType } = await _fileToBase64(file);
+    const { dataUrl, base64, mimeType } = await _resizeImageForUpload(file);
     const analysis = await estimateBodyAnalysisFromPhoto(base64, mimeType);
     if (!analysis || !analysis.summary) {
       if (indicator)
@@ -728,13 +777,13 @@ async function handleBodyPhotoUpload(event) {
       return;
     }
 
-    if (!state.bodyAnalysis[viewDay]) state.bodyAnalysis[viewDay] = {};
+    const photoUrl = await uploadBodyPhoto(viewYear, viewMonth, viewDay, dataUrl);
     state.bodyAnalysis[viewDay] = {
       summary: analysis.summary,
       focus: analysis.focus || "Mindful movement",
       note: analysis.note || "Keep it gentle and consistent.",
       capturedAt: Date.now(),
-      photo: await _fileToDataURL(file),
+      photoUrl,
     };
     scheduleSave();
     renderBodyView();
@@ -759,7 +808,9 @@ function renderBodyView() {
 
   const entries = Object.keys(state.bodyAnalysis || {}).length;
   const today = state.bodyAnalysis[viewDay];
-  const photos = Object.values(state.bodyAnalysis || {}).filter((entry) => entry.photo);
+  const photos = Object.values(state.bodyAnalysis || {}).filter(
+    (entry) => entry.photoUrl || entry.photo
+  );
   const completedDays = photos.length;
   const percent = Math.round((completedDays / Math.max(1, DAYS_IN_VIEW())) * 100);
 
@@ -797,19 +848,22 @@ function renderBodyView() {
   }
 
   const sorted = Object.entries(state.bodyAnalysis || {})
-    .filter(([, entry]) => entry.photo)
+    .filter(([, entry]) => entry.photoUrl || entry.photo)
     .map(([day, entry]) => ({ day: Number(day), ...entry }))
     .sort((a, b) => b.day - a.day);
 
   historyEl.innerHTML = sorted
     .map(
-      (entry) => `<button class="body-history-entry" onclick="showBodyHistory(${entry.day})">
-        <div class="bhead">
-          <span class="bday">${MONTH_NAMES[viewMonth]} ${entry.day}</span>
-          <span class="bfocus">${entry.focus || "Check-in"}</span>
-        </div>
-        <img src="${entry.photo}" alt="Body check-in ${entry.day}" />
-      </button>`
+      (entry) => {
+        const src = entry.photoUrl || entry.photo;
+        return `<button class="body-history-entry" onclick="showBodyHistory(${entry.day})">
+          <div class="bhead">
+            <span class="bday">${MONTH_NAMES[viewMonth]} ${entry.day}</span>
+            <span class="bfocus">${entry.focus || "Check-in"}</span>
+          </div>
+          <img src="${src}" alt="Body check-in ${entry.day}" />
+        </button>`;
+      }
     )
     .join("");
 }
@@ -819,9 +873,10 @@ function showBodyHistory(day) {
   if (!entry) return;
   const modalContent = document.getElementById("bodyHistoryModalContent");
   if (!modalContent) return;
+  const src = entry.photoUrl || entry.photo;
   modalContent.innerHTML = `
     <div class="body-history-modal-date">${MONTH_NAMES[viewMonth]} ${day}</div>
-    <img class="body-history-modal-img" src="${entry.photo}" alt="Body check-in ${day}" />
+    <img class="body-history-modal-img" src="${src}" alt="Body check-in ${day}" />
     <div class="body-history-modal-summary">${entry.summary}</div>
     <div class="body-history-modal-focus">Focus: ${entry.focus || "Gentle posture"}</div>
     <div class="body-history-modal-note">${entry.note || "Motivation note."}</div>
