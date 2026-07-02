@@ -9,7 +9,7 @@ Paste this file's content into a new chat session to continue development.
 - **Pure Vanilla JS (ES Modules)** — no build tools, no framework
 - **Firebase Firestore v10.12.0** — dynamic CDN import, IndexedDB persistence, real-time `onSnapshot`
 - **Gemini API** — `https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key=...`
-- **4 files + 1 context**: `index.html`, `app.js` (~2300 lines), `style.css` (~850 lines), `README.md`, `PROJECT_CONTEXT.md`
+- **4 files + 1 context**: `index.html`, `app.js` (~2590 lines), `style.css` (~950 lines), `README.md`, `PROJECT_CONTEXT.md`
 - **Local dev**: `python -m http.server 5500` from project root, open `http://localhost:5500`
 - **OS**: Windows. Git remote: `origin/main`
 
@@ -157,4 +157,47 @@ All public functions are exported via `Object.assign(window, {...})` at the bott
 
 ---
 
-_Last updated: 2026-06-29_
+---
+
+## Anti-Slip System (added 2026-07-02)
+
+### Status Banner (`#statusBanner` in Grid view)
+Always-visible banner above the habit table. States:
+- `state-fire` — ≥3-day streak, green glow animation
+- `state-slipping` — habits pending + ≥2 fails this week, amber pulse
+- `state-broken` — today or yesterday marked fail, red flash
+- `state-neutral` — default / other month
+
+Functions: `renderStatusBanner()` called in `render()`, `renderStats()`, `toggleCheck()`, `_doCycleDay()`, `_applyVerdict()`
+
+### 7-Day Slip History (`#slipHistoryPanel` in Progress view)
+Dynamically inserted after `.progress-heroes`. Shows last 7 day chips + a plain-English accountability message.
+
+Functions: `computeSlipState()` → `renderSlipHistory()` called in `showView('progress')` and `renderProgressView()`
+
+### Streak Protection Modal (`#streakConfirmModal`)
+Intercepts `cycleDay()` and `setDayVerdict()` when marking today as failed with an active streak.
+Shows streak count prominently, requires explicit confirmation.
+
+Functions: `_computeCurrentStreak()`, `_pendingCycleDayArgs`, `_executeCycleDay()`, `_doCycleDay()`, `_applyVerdict()`
+
+### Bottom Tab Bar (`#bottomTabBar`)
+Mobile-only (≤640px), fixed at bottom. Mirrors sidebar nav.
+Tab IDs: `tab-grid`, `tab-progress`, `tab-calories`, `tab-notes`, `tab-habits`
+Synced in `showView()` alongside `.nav-item` active states.
+
+---
+
+## CSS Theme (updated)
+
+Dark with indigo tint. New tokens:
+- `--bg:#07070f`, `--surface:#0d0d18`, `--green:#00e87a`, `--amber:#ffba2e`, `--red:#ff3d5a`, `--purple:#7c5cfc`
+- `--sans:'Sora','Inter',sans-serif` (Sora added for headings)
+- `--tab-bar-h:64px` (bottom nav height)
+
+Key new classes: `.status-banner`, `.state-fire/.state-slipping/.state-broken/.state-neutral`,
+`.slip-history`, `.slip-chip`, `.slip-warning`, `.streak-confirm-*`, `.bottom-tab-bar`, `.tab-btn`
+
+---
+
+_Last updated: 2026-07-02_

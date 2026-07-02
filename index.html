@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Suraj · Daily Tracker</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css" id="mainCss">
 <script>
   // Cache-bust CSS immediately so mobile/desktop see latest styles during development
@@ -65,6 +65,9 @@
       <button class="nav-item" onclick="showView('calories')" id="nav-calories">
         <span class="nav-icon">◈</span><span class="nav-label">Calories</span>
       </button>
+      <button class="nav-item" onclick="showView('body')" id="nav-body">
+        <span class="nav-icon">🧍</span><span class="nav-label">Body</span>
+      </button>
       <button class="nav-item" onclick="showView('notes')" id="nav-notes">
         <span class="nav-icon">✎</span><span class="nav-label">Notes</span>
       </button>
@@ -91,6 +94,7 @@
   <main class="content" id="mainContent">
     <div class="global-top">
       <button id="mobileMenuBtn" class="mobile-menu-btn" aria-label="Open menu" onclick="toggleSidebar()">☰</button>
+      <button class="btn-ghost small theme-toggle-btn" id="themeToggleBtn" onclick="toggleTheme()" title="Switch theme">☀️ Light</button>
     </div>
 
     <!-- ── GRID VIEW ── -->
@@ -131,6 +135,15 @@
         <span class="month-bar-label" id="dayProgress">Day 0 of 0</span>
         <div class="month-bar-track"><div class="month-bar-fill" id="monthFill"></div></div>
         <span class="month-bar-pct" id="monthPct">0%</span>
+      </div>
+
+      <!-- ── STATUS BANNER ── -->
+      <div id="statusBanner" class="status-banner state-neutral">
+        <div class="sbanner-icon" id="statusBannerIcon">📋</div>
+        <div class="sbanner-text">
+          <div class="sbanner-title" id="statusBannerTitle">Loading…</div>
+          <div class="sbanner-sub" id="statusBannerSub"></div>
+        </div>
       </div>
 
       <div id="dayNoteBanner" class="day-note-banner hidden"></div>
@@ -308,6 +321,62 @@
       <div id="calorieLog" class="cal-log"></div>
     </div>
 
+    <!-- ── BODY ANALYSIS VIEW ── -->
+    <div id="view-body" class="view">
+      <div class="view-header">
+        <div>
+          <div class="view-eyebrow" id="bodyMonth">—</div>
+          <h2 class="view-title">Body Analysis</h2>
+        </div>
+        <button class="btn-primary" onclick="triggerBodyPhotoUpload()">📸 Capture Today</button>
+      </div>
+
+      <div class="body-hero">
+        <div class="body-hero-card">
+          <div class="body-hero-title">Daily body check-in</div>
+          <div class="body-hero-text">Capture a quick photo and get a positive, habit-focused summary for today.</div>
+        </div>
+        <div class="body-hero-stats">
+          <div class="body-stat">
+            <div class="body-stat-val" id="bodyDaysTracked">0</div>
+            <div class="body-stat-label">Days tracked</div>
+          </div>
+          <div class="body-stat">
+            <div class="body-stat-val" id="bodyLastFocus">—</div>
+            <div class="body-stat-label">Daily focus</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="body-analysis-panel">
+        <div class="body-analysis-actions">
+          <button class="btn-ghost" onclick="triggerBodyPhotoUpload()">📸 Upload photo</button>
+          <button class="btn-ghost" onclick="openAISetup()">⚡ AI setup</button>
+        </div>
+        <div id="bodyAnalysisCard" class="body-analysis-card hidden">
+          <div class="body-analysis-date" id="bodyAnalysisDate"></div>
+          <div class="body-analysis-summary" id="bodyAnalysisSummary"></div>
+          <div class="body-analysis-suggestion" id="bodyAnalysisSuggestion"></div>
+          <div class="body-analysis-note">This check-in is for motivation and posture support. Not medical advice.</div>
+        </div>
+        <div id="bodyAnalysisEmpty" class="body-analysis-empty">No body analysis yet. Take a photo and build a consistent daily record.</div>
+      </div>
+      <div class="body-progress-panel">
+        <div class="body-progress-card">
+          <div class="bp-label">Tracked this month</div>
+          <div class="bp-value" id="bodyTrackedPercent">0%</div>
+          <div class="bp-note" id="bodyProgressNote">Start capturing your body check-ins to build momentum.</div>
+        </div>
+        <div class="body-progress-card">
+          <div class="bp-label">Saved photos</div>
+          <div class="bp-value" id="bodyPhotoCount">0</div>
+          <div class="bp-note" id="bodyPhotoNote">View old check-in photos to see your progress.</div>
+        </div>
+      </div>
+      <div class="body-history" id="bodyHistory"></div>
+      <input type="file" id="bodyPhotoInput" accept="image/*" capture="environment" style="display:none" onchange="handleBodyPhotoUpload(event)">
+    </div>
+
     <!-- ── NOTES VIEW ── -->
     <div id="view-notes" class="view">
       <div class="view-header">
@@ -360,8 +429,50 @@
   <button class="chat-fab" id="chatFab" onclick="toggleChat()" title="AI Assistant">&#x25C8;</button>
 </div>
 
+<!-- ── BOTTOM TAB BAR (mobile) ── -->
+<nav class="bottom-tab-bar" id="bottomTabBar">
+  <button class="tab-btn active" id="tab-grid" onclick="showView('grid')">
+    <span class="tab-btn-icon">▦</span>
+    <span class="tab-btn-label">Grid</span>
+  </button>
+  <button class="tab-btn" id="tab-progress" onclick="showView('progress')">
+    <span class="tab-btn-icon">◎</span>
+    <span class="tab-btn-label">Progress</span>
+  </button>
+  <button class="tab-btn" id="tab-calories" onclick="showView('calories')">
+    <span class="tab-btn-icon">◈</span>
+    <span class="tab-btn-label">Calories</span>
+  </button>
+  <button class="tab-btn" id="tab-body" onclick="showView('body')">
+    <span class="tab-btn-icon">🧍</span>
+    <span class="tab-btn-label">Body</span>
+  </button>
+  <button class="tab-btn" id="tab-notes" onclick="showView('notes')">
+    <span class="tab-btn-icon">✎</span>
+    <span class="tab-btn-label">Notes</span>
+  </button>
+  <button class="tab-btn" id="tab-habits" onclick="showView('habits')">
+    <span class="tab-btn-icon">✦</span>
+    <span class="tab-btn-label">Habits</span>
+  </button>
+</nav>
+
 <!-- Mobile backdrop for sidebar drawer -->
 <div id="mobileBackdrop" class="mobile-backdrop hidden" onclick="toggleSidebar()"></div>
+
+<!-- ── BODY HISTORY MODAL ── -->
+<div class="modal-overlay hidden" id="bodyHistoryModal">
+  <div class="modal wide">
+    <div class="modal-header">
+      <div class="modal-title">Body Check-in</div>
+      <button class="modal-close" onclick="closeModal('bodyHistoryModal')">✕</button>
+    </div>
+    <div id="bodyHistoryModalContent"></div>
+    <div class="modal-actions">
+      <button class="btn-ghost" onclick="closeModal('bodyHistoryModal')">Close</button>
+    </div>
+  </div>
+</div>
 
 <!-- ── NOTE MODAL ── -->
 <div class="modal-overlay hidden" id="noteModal">
@@ -456,6 +567,20 @@
       <button class="btn-ghost danger" onclick="removeGeminiKey()">Remove</button>
       <button class="btn-ghost" onclick="closeModal('aiSetupModal')">Cancel</button>
       <button class="btn-primary" onclick="saveGeminiKey()">Save &amp; Enable</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── STREAK PROTECTION MODAL ── -->
+<div class="modal-overlay hidden streak-confirm-modal" id="streakConfirmModal">
+  <div class="modal" style="max-width:340px">
+    <div class="streak-confirm-icon">⚠️</div>
+    <span class="streak-confirm-streaknum" id="streakConfirmNum">0</span>
+    <span class="streak-confirm-streakunit" id="streakConfirmUnit">day streak</span>
+    <p class="streak-confirm-msg" id="streakConfirmMsg">Marking this day as failed will break your streak. Are you sure?</p>
+    <div class="streak-confirm-actions">
+      <button class="btn-cancel" onclick="closeModal('streakConfirmModal')">Keep Streak</button>
+      <button class="btn-confirm-fail" id="streakConfirmBtn">Yes, Mark Fail</button>
     </div>
   </div>
 </div>
