@@ -365,6 +365,21 @@ async function _resolveGeminiModel(key) {
   }
 }
 
+async function fetchWithTimeout(input, init = {}, timeout = 120000) {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeout);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } catch (err) {
+    if (err.name === "AbortError") {
+      throw new Error(`Request timed out after ${timeout / 1000} seconds.`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(id);
+  }
+}
+
 async function callGemini(textPrompt, imageBase64 = null, mimeType = null) {
   const key = localStorage.getItem(GEMINI_KEY_KEY);
   if (!key) throw new Error("No Gemini API key configured.");
@@ -379,7 +394,7 @@ async function callGemini(textPrompt, imageBase64 = null, mimeType = null) {
   }
   parts.push({ text: textPrompt });
 
-  const resp = await fetch(
+  const resp = await fetchWithTimeout(
     `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(
       key
     )}`,
@@ -390,7 +405,8 @@ async function callGemini(textPrompt, imageBase64 = null, mimeType = null) {
         contents: [{ parts }],
         generationConfig: { temperature: 0.2, maxOutputTokens: 600 },
       }),
-    }
+    },
+    120000
   );
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({}));
@@ -752,10 +768,6 @@ function addPhotoEntries() {
 // ── AI SETUP ──────────────────────────────────────────────────────────────────
 
 function triggerBodyPhotoUpload() {
-  if (!localStorage.getItem(GEMINI_KEY_KEY)) {
-    openAISetup();
-    return;
-  }
   document.getElementById("bodyPhotoInput").click();
 }
 
@@ -765,33 +777,27 @@ async function handleBodyPhotoUpload(event) {
   if (!file) return;
 
   const indicator = document.getElementById("bodyAnalysisEmpty");
-  if (indicator) indicator.textContent = "Analyzing photo…";
+  if (indicator) indicator.textContent = "Saving photo…";
 
   try {
-    const { dataUrl, base64, mimeType } = await _resizeImageForUpload(file);
-    const analysis = await estimateBodyAnalysisFromPhoto(base64, mimeType);
-    if (!analysis || !analysis.summary) {
-      if (indicator)
-        indicator.textContent =
-          "Body analysis was unclear. Try a clearer photo or better lighting.";
-      return;
-    }
-
+    const { dataUrl } = await _resizeImageForUpload(file);
     const photoUrl = await uploadBodyPhoto(viewYear, viewMonth, viewDay, dataUrl);
+
     state.bodyAnalysis[viewDay] = {
-      summary: analysis.summary,
-      focus: analysis.focus || "Mindful movement",
-      note: analysis.note || "Keep it gentle and consistent.",
+      ...(state.bodyAnalysis[viewDay] || {}),
       capturedAt: Date.now(),
       photoUrl,
     };
     scheduleSave();
     renderBodyView();
+
+    if (indicator)
+      indicator.textContent = "Photo saved. View your progress below.";
   } catch (e) {
-    console.error("Body photo analysis failed:", e);
+    console.error("Body photo save failed:", e);
     if (indicator)
       indicator.textContent =
-        "Analysis failed. Check AI key or try again later.";
+        "Could not save photo. Check your Firebase config or try again.";
   }
 }
 
@@ -826,10 +832,18 @@ function renderBodyView() {
   document.getElementById("bodyLastFocus").textContent =
     today?.focus || "No entry yet";
 
+  const hasPhoto = today && (today.photoUrl || today.photo);
   if (today && today.summary) {
     if (dateEl) dateEl.textContent = `${MONTH_NAMES[viewMonth]} ${viewDay}`;
     if (summaryEl) summaryEl.textContent = today.summary;
     if (focusEl) focusEl.textContent = `Focus: ${today.focus || "Gentle posture"}`;
+    if (card) card.classList.remove("hidden");
+    if (empty) empty.classList.add("hidden");
+  } else if (hasPhoto) {
+    if (dateEl) dateEl.textContent = `${MONTH_NAMES[viewMonth]} ${viewDay}`;
+    if (summaryEl) summaryEl.textContent =
+      "Photo saved. AI analysis has been disabled for progress tracking.";
+    if (focusEl) focusEl.textContent = "Focus: View your check-in photos.";
     if (card) card.classList.remove("hidden");
     if (empty) empty.classList.add("hidden");
   } else {
@@ -837,7 +851,7 @@ function renderBodyView() {
     if (empty) {
       empty.classList.remove("hidden");
       empty.textContent =
-        "No body analysis yet. Take a photo and build a consistent daily record.";
+        "No body photos yet. Take a photo to track your progress.";
     }
   }
 

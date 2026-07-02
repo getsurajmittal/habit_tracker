@@ -66,7 +66,7 @@
         <span class="nav-icon">◈</span><span class="nav-label">Calories</span>
       </button>
       <button class="nav-item" onclick="showView('body')" id="nav-body">
-        <span class="nav-icon">🧍</span><span class="nav-label">Body</span>
+        <span class="nav-icon">🧍</span><span class="nav-label">Photos</span>
       </button>
       <button class="nav-item" onclick="showView('notes')" id="nav-notes">
         <span class="nav-icon">✎</span><span class="nav-label">Notes</span>
@@ -321,12 +321,12 @@
       <div id="calorieLog" class="cal-log"></div>
     </div>
 
-    <!-- ── BODY ANALYSIS VIEW ── -->
+    <!-- ── PHOTO CHECK-INS VIEW ── -->
     <div id="view-body" class="view">
       <div class="view-header">
         <div>
           <div class="view-eyebrow" id="bodyMonth">—</div>
-          <h2 class="view-title">Body Analysis</h2>
+          <h2 class="view-title">Photo Check-ins</h2>
         </div>
         <button class="btn-primary" onclick="triggerBodyPhotoUpload()">📸 Capture Today</button>
       </div>
@@ -334,7 +334,7 @@
       <div class="body-hero">
         <div class="body-hero-card">
           <div class="body-hero-title">Daily body check-in</div>
-          <div class="body-hero-text">Capture a quick photo and get a positive, habit-focused summary for today.</div>
+          <div class="body-hero-text">Capture a quick photo to save your progress and keep a visual check-in history.</div>
         </div>
         <div class="body-hero-stats">
           <div class="body-stat">
@@ -351,21 +351,20 @@
       <div class="body-analysis-panel">
         <div class="body-analysis-actions">
           <button class="btn-ghost" onclick="triggerBodyPhotoUpload()">📸 Upload photo</button>
-          <button class="btn-ghost" onclick="openAISetup()">⚡ AI setup</button>
         </div>
         <div id="bodyAnalysisCard" class="body-analysis-card hidden">
           <div class="body-analysis-date" id="bodyAnalysisDate"></div>
           <div class="body-analysis-summary" id="bodyAnalysisSummary"></div>
           <div class="body-analysis-suggestion" id="bodyAnalysisSuggestion"></div>
-          <div class="body-analysis-note">This check-in is for motivation and posture support. Not medical advice.</div>
+          <div class="body-analysis-note">These photos are saved for progress tracking only.</div>
         </div>
-        <div id="bodyAnalysisEmpty" class="body-analysis-empty">No body analysis yet. Take a photo and build a consistent daily record.</div>
+        <div id="bodyAnalysisEmpty" class="body-analysis-empty">No photos yet. Take a photo to track your progress.</div>
       </div>
       <div class="body-progress-panel">
         <div class="body-progress-card">
           <div class="bp-label">Tracked this month</div>
           <div class="bp-value" id="bodyTrackedPercent">0%</div>
-          <div class="bp-note" id="bodyProgressNote">Start capturing your body check-ins to build momentum.</div>
+          <div class="bp-note" id="bodyProgressNote">Saved photos help you compare check-ins over time.</div>
         </div>
         <div class="body-progress-card">
           <div class="bp-label">Saved photos</div>
