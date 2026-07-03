@@ -782,6 +782,10 @@ function addPhotoEntries() {
 
 // ── AI SETUP ──────────────────────────────────────────────────────────────────
 
+function triggerBodyCamera() {
+  document.getElementById("bodyCameraInput").click();
+}
+
 function triggerBodyPhotoUpload() {
   document.getElementById("bodyPhotoInput").click();
 }
