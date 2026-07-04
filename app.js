@@ -1693,7 +1693,7 @@ function renderNotesView() {
       viewMonth === CURRENT_MONTH &&
       d === CURRENT_DAY;
     const fut = d > todayDay;
-    const dow = DOW[new Date(viewYear, viewMonth - 1, d).getDay()];
+    const dow = DOW[new Date(viewYear, viewMonth, d).getDay()];
     const safe = note
       ? note
           .replace(/&/g, "&amp;")
