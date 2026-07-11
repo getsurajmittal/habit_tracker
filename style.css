@@ -1159,3 +1159,59 @@ button, .chk, .daybtn, .notebtn, .habit-btn {
   /* Slip history chips smaller */
   .slip-chip-dot{width:28px;height:28px;font-size:10px}
 }
+
+/* ── CLICKABLE DATE HEADERS ── */
+.clickable-eyebrow {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  user-select: none;
+  transition: color 0.15s ease, opacity 0.15s ease;
+}
+.clickable-eyebrow:hover {
+  opacity: 0.8;
+  color: var(--green) !important;
+}
+
+/* ── MONTH SELECTOR MODAL ── */
+.month-selector-year-nav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: 10px 0 20px;
+}
+.month-selector-year {
+  font-family: var(--mono);
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+}
+.month-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-bottom: 20px;
+}
+.month-sel-btn {
+  padding: 10px 4px;
+  border-radius: var(--radius-sm);
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  color: var(--text-mid);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  transition: all 0.15s ease;
+}
+.month-sel-btn:hover {
+  color: var(--text);
+  border-color: var(--border2);
+  background: var(--surface3);
+}
+.month-sel-btn.active {
+  background: linear-gradient(135deg, var(--green), var(--blue));
+  color: var(--bg);
+  border-color: transparent;
+  box-shadow: 0 4px 12px rgba(31,182,255,0.15);
+}

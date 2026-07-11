@@ -34,6 +34,7 @@ let viewYear = CURRENT_YEAR;
 let viewMonth = CURRENT_MONTH;
 let viewDay = CURRENT_DAY;
 let singleDayView = true; // show one day by default
+let selectorYear = CURRENT_YEAR; // temporary year used in month selector modal
 
 let avgRangeConfig = {
   type: "month", // "month" | "days" | "custom"
@@ -2436,6 +2437,47 @@ function goToToday() {
   render();
 }
 
+// ── MONTH SELECTOR MODAL LOGIC ──
+function openMonthSelector() {
+  selectorYear = viewYear;
+  document.getElementById("selectorYear").textContent = selectorYear;
+  renderMonthGrid();
+  openModal("monthSelectorModal");
+}
+
+function adjustSelectorYear(offset) {
+  selectorYear += offset;
+  document.getElementById("selectorYear").textContent = selectorYear;
+  renderMonthGrid();
+}
+
+function renderMonthGrid() {
+  const grid = document.getElementById("monthGrid");
+  if (!grid) return;
+  
+  let html = "";
+  MONTH_NAMES.forEach((name, idx) => {
+    const isActive = (selectorYear === viewYear && idx === viewMonth);
+    const cls = isActive ? "month-sel-btn active" : "month-sel-btn";
+    const shortName = name.slice(0, 3);
+    html += `<button class="${cls}" onclick="selectMonthFromSelector(${idx})">${shortName}</button>`;
+  });
+  grid.innerHTML = html;
+}
+
+function selectMonthFromSelector(monthIndex) {
+  viewYear = selectorYear;
+  viewMonth = monthIndex;
+  
+  // Clamp viewDay if new month has fewer days
+  const dim = DAYS_IN_VIEW();
+  if (viewDay > dim) viewDay = dim;
+  
+  subscribeToMonth(viewYear, viewMonth);
+  render();
+  closeModal("monthSelectorModal");
+}
+
 function showView(name) {
   document
     .querySelectorAll(".view")
@@ -2947,6 +2989,9 @@ Object.assign(window, {
   prevDay,
   nextDay,
   goToToday,
+  openMonthSelector,
+  adjustSelectorYear,
+  selectMonthFromSelector,
   addCalorieEntry,
   deleteCalorieEntry,
   updateCalorieGoal,

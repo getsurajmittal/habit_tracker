@@ -102,7 +102,7 @@
       <div class="view-header">
         <div>
           <div style="display:flex;align-items:center;gap:12px">
-            <div class="view-eyebrow" id="gridMonth">—</div>
+            <div class="view-eyebrow clickable-eyebrow" onclick="openMonthSelector()" title="Change Month"><span id="gridMonth">—</span> <span style="font-size: 8px;">▼</span></div>
             <div class="day-nav">
               <button class="nav-btn" onclick="prevDay()">◂</button>
               <button class="btn-ghost small" onclick="goToToday()">Today</button>
@@ -162,7 +162,7 @@
     <div id="view-progress" class="view">
       <div class="view-header">
         <div>
-          <div class="view-eyebrow" id="progressMonth">—</div>
+          <div class="view-eyebrow clickable-eyebrow" onclick="openMonthSelector()" title="Change Month"><span id="progressMonth">—</span> <span style="font-size: 8px;">▼</span></div>
           <h2 class="view-title">Progress</h2>
         </div>
       </div>
@@ -260,7 +260,7 @@
       <div class="view-header">
         <div>
           <div style="display:flex;align-items:center;gap:12px">
-            <div class="view-eyebrow" id="calorieMonth">—</div>
+            <div class="view-eyebrow clickable-eyebrow" onclick="openMonthSelector()" title="Change Month"><span id="calorieMonth">—</span> <span style="font-size: 8px;">▼</span></div>
             <div class="day-nav">
               <button class="nav-btn" onclick="prevDay()">◂</button>
               <button class="btn-ghost small" onclick="goToToday()">Today</button>
@@ -325,7 +325,7 @@
     <div id="view-body" class="view">
       <div class="view-header">
         <div>
-          <div class="view-eyebrow" id="bodyMonth">—</div>
+          <div class="view-eyebrow clickable-eyebrow" onclick="openMonthSelector()" title="Change Month"><span id="bodyMonth">—</span> <span style="font-size: 8px;">▼</span></div>
           <h2 class="view-title">Photo Check-ins</h2>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -356,7 +356,7 @@
     <div id="view-notes" class="view">
       <div class="view-header">
         <div>
-          <div class="view-eyebrow" id="notesMonth">—</div>
+          <div class="view-eyebrow clickable-eyebrow" onclick="openMonthSelector()" title="Change Month"><span id="notesMonth">—</span> <span style="font-size: 8px;">▼</span></div>
           <h2 class="view-title">Notes</h2>
         </div>
       </div>
@@ -607,6 +607,26 @@
     <div class="modal-actions">
       <button class="btn-ghost" onclick="closeModal('photoResultModal')">Cancel</button>
       <button class="btn-primary" onclick="addPhotoEntries()">Add Selected</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── MONTH SELECTOR MODAL ── -->
+<div class="modal-overlay hidden" id="monthSelectorModal">
+  <div class="modal" style="max-width: 320px;">
+    <div class="modal-header">
+      <div class="modal-title">Select Month</div>
+      <button class="modal-close" onclick="closeModal('monthSelectorModal')">✕</button>
+    </div>
+    <div class="month-selector-year-nav">
+      <button class="nav-btn" onclick="adjustSelectorYear(-1)">‹</button>
+      <span class="month-selector-year" id="selectorYear">—</span>
+      <button class="nav-btn" onclick="adjustSelectorYear(1)">›</button>
+    </div>
+    <div class="month-grid" id="monthGrid"></div>
+    <div class="modal-actions">
+      <button class="btn-ghost" onclick="closeModal('monthSelectorModal')">Close</button>
+      <button class="btn-primary" onclick="goToToday(); closeModal('monthSelectorModal');">Current Month</button>
     </div>
   </div>
 </div>
