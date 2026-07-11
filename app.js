@@ -84,6 +84,14 @@ const THEME_KEY = "tracker_theme";
 
 async function boot() {
   initTheme();
+  // Clear any cached model that is known to have no free-tier quota
+  const cachedModel = localStorage.getItem(GEMINI_MODEL_KEY);
+  if (
+    cachedModel &&
+    (cachedModel.includes("omni") || cachedModel.includes("thinking"))
+  ) {
+    localStorage.removeItem(GEMINI_MODEL_KEY);
+  }
   const saved = localStorage.getItem(FB_CONFIG_KEY);
   if (saved) {
     try {
@@ -362,7 +370,8 @@ async function _resolveGeminiModel(key) {
           m.supportedGenerationMethods?.includes("generateContent") &&
           m.name.includes("flash") &&
           !m.name.includes("thinking") &&
-          !m.name.includes("-8b")
+          !m.name.includes("-8b") &&
+          !m.name.includes("omni") // omni models have 0 free-tier quota
       )
       .map((m) => m.name.replace("models/", ""));
 
@@ -425,7 +434,16 @@ async function callGemini(textPrompt, imageBase64 = null, mimeType = null) {
   );
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({}));
-    throw new Error(err.error?.message || `Gemini API error ${resp.status}`);
+    const msg = err.error?.message || `Gemini API error ${resp.status}`;
+    // Quota exceeded or model not available — clear cached model so next call re-resolves
+    if (
+      resp.status === 429 ||
+      msg.toLowerCase().includes("quota") ||
+      msg.toLowerCase().includes("rate limit")
+    ) {
+      localStorage.removeItem(GEMINI_MODEL_KEY);
+    }
+    throw new Error(msg);
   }
   const data = await resp.json();
   return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
@@ -665,7 +683,12 @@ async function _fileToDataURL(file) {
   return dataUrl;
 }
 
-async function _resizeImageForUpload(file, maxWidth = 640, maxHeight = 640, quality = 0.5) {
+async function _resizeImageForUpload(
+  file,
+  maxWidth = 640,
+  maxHeight = 640,
+  quality = 0.5
+) {
   const { dataUrl } = await _fileToBase64(file);
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -774,6 +797,10 @@ function addPhotoEntries() {
 
 // ── AI SETUP ──────────────────────────────────────────────────────────────────
 
+function triggerBodyCamera() {
+  document.getElementById("bodyCameraInput").click();
+}
+
 function triggerBodyPhotoUpload() {
   document.getElementById("bodyPhotoInput").click();
 }
@@ -783,16 +810,8 @@ async function handleBodyPhotoUpload(event) {
   event.target.value = "";
   if (!file) return;
 
-  const indicator = document.getElementById("bodyAnalysisEmpty");
-  if (indicator) indicator.textContent = "Saving photo…";
-
   try {
     const { dataUrl } = await _resizeImageForUpload(file);
-    console.log("Body photo resized, storing inline", {
-      width: dataUrl.length,
-      day: viewDay,
-    });
-
     state.bodyAnalysis[viewDay] = {
       ...(state.bodyAnalysis[viewDay] || {}),
       capturedAt: Date.now(),
@@ -800,112 +819,82 @@ async function handleBodyPhotoUpload(event) {
     };
     scheduleSave();
     renderBodyView();
-
-    if (indicator)
-      indicator.textContent = "Photo saved. View your progress below.";
   } catch (e) {
     console.error("Body photo save failed:", e);
-    if (indicator)
-      indicator.textContent =
-        "Could not save photo. Check your Firebase config or try again.";
+    alert("Could not save photo. Please try again.");
   }
 }
 
 function renderBodyView() {
-  const card = document.getElementById("bodyAnalysisCard");
-  const empty = document.getElementById("bodyAnalysisEmpty");
-  const summaryEl = document.getElementById("bodyAnalysisSummary");
-  const focusEl = document.getElementById("bodyAnalysisSuggestion");
-  const dateEl = document.getElementById("bodyAnalysisDate");
-  const historyEl = document.getElementById("bodyHistory");
-  const trackedPercentEl = document.getElementById("bodyTrackedPercent");
-  const photoCountEl = document.getElementById("bodyPhotoCount");
-  const progressNoteEl = document.getElementById("bodyProgressNote");
-
-  const entries = Object.keys(state.bodyAnalysis || {}).length;
-  const today = state.bodyAnalysis[viewDay];
   const photos = Object.values(state.bodyAnalysis || {}).filter(
-    (entry) => entry.photo || entry.photoUrl
+    (e) => e.photo || e.photoUrl
   );
   const completedDays = photos.length;
-  const percent = Math.round((completedDays / Math.max(1, DAYS_IN_VIEW())) * 100);
+  const percent = Math.round(
+    (completedDays / Math.max(1, DAYS_IN_VIEW())) * 100
+  );
 
+  const daysTrackedEl = document.getElementById("bodyDaysTracked");
+  const trackedPercentEl = document.getElementById("bodyTrackedPercent");
+  if (daysTrackedEl) daysTrackedEl.textContent = completedDays;
   if (trackedPercentEl) trackedPercentEl.textContent = `${percent}%`;
-  if (photoCountEl) photoCountEl.textContent = `${photos.length}`;
-  if (progressNoteEl)
-    progressNoteEl.textContent =
-      photos.length > 0
-        ? "Tap any entry below to review your progress photo and note."
-        : "Start capturing daily photos to watch your journey grow.";
 
-  document.getElementById("bodyDaysTracked").textContent = entries;
-  document.getElementById("bodyLastFocus").textContent =
-    today?.focus || "No entry yet";
-
-  const hasPhoto = today && (today.photoUrl || today.photo);
-  if (today && today.summary) {
-    if (dateEl) dateEl.textContent = `${MONTH_NAMES[viewMonth]} ${viewDay}`;
-    if (summaryEl) summaryEl.textContent = today.summary;
-    if (focusEl) focusEl.textContent = `Focus: ${today.focus || "Gentle posture"}`;
-    if (card) card.classList.remove("hidden");
-    if (empty) empty.classList.add("hidden");
-  } else if (hasPhoto) {
-    if (dateEl) dateEl.textContent = `${MONTH_NAMES[viewMonth]} ${viewDay}`;
-    if (summaryEl) summaryEl.textContent =
-      today?.photo
-        ? "Photo saved. Tap a block below to expand."
-        : "Photo URL saved. Tap a block below to expand.";
-    if (focusEl) focusEl.textContent = "Focus: View your check-in photos.";
-    if (card) card.classList.remove("hidden");
-    if (empty) empty.classList.add("hidden");
-  } else {
-    if (card) card.classList.add("hidden");
-    if (empty) {
-      empty.classList.remove("hidden");
-      empty.textContent =
-        "No body photos yet. Take a photo to track your progress.";
-    }
-  }
-
+  const historyEl = document.getElementById("bodyHistory");
   if (!historyEl) return;
-  if (!photos.length) {
-    historyEl.innerHTML = `<div class="body-history-empty">No previous body check-ins yet.</div>`;
-    return;
+
+  const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const daysInMonth = DAYS_IN_VIEW();
+
+  let html = `<div class="body-day-grid">`;
+  for (let d = 1; d <= daysInMonth; d++) {
+    const entry = state.bodyAnalysis?.[d];
+    const hasPhoto = !!(entry?.photo || entry?.photoUrl);
+    const isToday =
+      viewYear === CURRENT_YEAR &&
+      viewMonth === CURRENT_MONTH &&
+      d === CURRENT_DAY;
+    const future = isFuture(d);
+    const dow = DOW[new Date(viewYear, viewMonth, d).getDay()];
+    let cls = "body-day-block";
+    if (hasPhoto) cls += " has-photo";
+    if (isToday) cls += " is-today";
+    if (future) cls += " is-future";
+    const onclick = hasPhoto ? `onclick="showBodyHistory(${d})"` : "";
+    html += `<div class="${cls}" ${onclick} title="${
+      hasPhoto
+        ? `View photo — ${MONTH_NAMES[viewMonth]} ${d}`
+        : MONTH_NAMES[viewMonth] + " " + d
+    }">
+      <span class="bdb-num">${d}</span>
+      <span class="bdb-dow">${dow}</span>
+      ${hasPhoto ? `<span class="bdb-cam">📷</span>` : ""}
+    </div>`;
+  }
+  html += `</div>`;
+
+  if (!completedDays) {
+    html += `<div class="body-history-empty">No photos yet for ${MONTH_NAMES[viewMonth]} ${viewYear}. Tap a day or use 📸 above to add your first check-in.</div>`;
   }
 
-  const sorted = Object.entries(state.bodyAnalysis || {})
-    .filter(([, entry]) => entry.photo || entry.photoUrl)
-    .map(([day, entry]) => ({ day: Number(day), ...entry }))
-    .sort((a, b) => b.day - a.day);
-
-  historyEl.innerHTML = sorted
-    .map(
-      (entry) => {
-        const src = entry.photoUrl || entry.photo;
-        return `<div class="body-history-entry" onclick="showBodyHistory(${entry.day})">
-          <div class="body-history-entry-header">
-            <div class="bhead">
-              <span class="bday">${MONTH_NAMES[viewMonth]} ${entry.day}</span>
-              <span class="bfocus">${entry.focus || "Check-in"}</span>
-            </div>
-            <button class="body-history-delete" onclick="deleteBodyPhoto(${entry.day}, event)" title="Delete photo">✕</button>
-          </div>
-          <img src="${src}" alt="Body check-in ${entry.day}" />
-        </div>`;
-      }
-    )
-    .join("");
+  historyEl.innerHTML = html;
 }
 
 function deleteBodyPhoto(day, event) {
-  event.stopPropagation();
-  if (!confirm(`Delete the photo for ${MONTH_NAMES[viewMonth]} ${day}?`)) return;
+  if (event) event.stopPropagation();
+  if (!confirm(`Delete the photo for ${MONTH_NAMES[viewMonth]} ${day}?`))
+    return;
   if (!state.bodyAnalysis || !state.bodyAnalysis[day]) return;
   delete state.bodyAnalysis[day].photo;
   delete state.bodyAnalysis[day].photoUrl;
-  if (Object.keys(state.bodyAnalysis[day]).length === 0) delete state.bodyAnalysis[day];
+  if (Object.keys(state.bodyAnalysis[day]).length === 0)
+    delete state.bodyAnalysis[day];
   scheduleSave();
   renderBodyView();
+}
+
+function deleteBodyPhotoFromModal(day) {
+  closeModal("bodyHistoryModal");
+  deleteBodyPhoto(day, null);
 }
 
 function showBodyHistory(day) {
@@ -914,12 +903,19 @@ function showBodyHistory(day) {
   const modalContent = document.getElementById("bodyHistoryModalContent");
   if (!modalContent) return;
   const src = entry.photoUrl || entry.photo;
+  const isToday =
+    viewYear === CURRENT_YEAR &&
+    viewMonth === CURRENT_MONTH &&
+    day === CURRENT_DAY;
+  const dateLabel = `${MONTH_NAMES[viewMonth]} ${day}, ${viewYear}${
+    isToday ? " · Today" : ""
+  }`;
   modalContent.innerHTML = `
-    <div class="body-history-modal-date">${MONTH_NAMES[viewMonth]} ${day}</div>
+    <div class="body-history-modal-date">${dateLabel}</div>
     <img class="body-history-modal-img" src="${src}" alt="Body check-in ${day}" />
-    <div class="body-history-modal-summary">${entry.summary}</div>
-    <div class="body-history-modal-focus">Focus: ${entry.focus || "Gentle posture"}</div>
-    <div class="body-history-modal-note">${entry.note || "Motivation note."}</div>
+    <div class="body-modal-delete-row">
+      <button class="btn-ghost danger" onclick="deleteBodyPhotoFromModal(${day})">🗑 Delete photo</button>
+    </div>
   `;
   openModal("bodyHistoryModal");
 }
@@ -1557,24 +1553,32 @@ function cycleDay(day, btn) {
     // Actually cycle goes: none->success->fail->none
     // So first click = success, never hits fail on first click
   }
-  const next = !cur ? 'success' : cur === 'success' ? 'fail' : undefined;
+  const next = !cur ? "success" : cur === "success" ? "fail" : undefined;
 
   // Streak protection: intercept when trying to mark fail on today with a streak
-  const isToday = viewYear === CURRENT_YEAR && viewMonth === CURRENT_MONTH && day === CURRENT_DAY;
-  if (next === 'fail' && isToday) {
+  const isToday =
+    viewYear === CURRENT_YEAR &&
+    viewMonth === CURRENT_MONTH &&
+    day === CURRENT_DAY;
+  if (next === "fail" && isToday) {
     const streak = _computeCurrentStreak();
     if (streak > 0) {
       // Show confirmation modal instead of immediately cycling
       _pendingCycleDayArgs = { day, btn, next };
-      const numEl = document.getElementById('streakConfirmNum');
-      const unitEl = document.getElementById('streakConfirmUnit');
-      const msgEl = document.getElementById('streakConfirmMsg');
-      const confirmBtn = document.getElementById('streakConfirmBtn');
+      const numEl = document.getElementById("streakConfirmNum");
+      const unitEl = document.getElementById("streakConfirmUnit");
+      const msgEl = document.getElementById("streakConfirmMsg");
+      const confirmBtn = document.getElementById("streakConfirmBtn");
       if (numEl) numEl.textContent = streak;
-      if (unitEl) unitEl.textContent = `day${streak !== 1 ? 's' : ''} at stake`;
-      if (msgEl) msgEl.textContent = `You have a ${streak}-day streak. Marking today as failed will reset it to zero. Are you absolutely sure?`;
-      if (confirmBtn) confirmBtn.onclick = () => { closeModal('streakConfirmModal'); _executeCycleDay(); };
-      openModal('streakConfirmModal');
+      if (unitEl) unitEl.textContent = `day${streak !== 1 ? "s" : ""} at stake`;
+      if (msgEl)
+        msgEl.textContent = `You have a ${streak}-day streak. Marking today as failed will reset it to zero. Are you absolutely sure?`;
+      if (confirmBtn)
+        confirmBtn.onclick = () => {
+          closeModal("streakConfirmModal");
+          _executeCycleDay();
+        };
+      openModal("streakConfirmModal");
       return;
     }
   }
@@ -1595,14 +1599,14 @@ function _doCycleDay(day, btn, next) {
   if (next) state.successDays[day] = next;
   else delete state.successDays[day];
 
-  btn.className = 'daybtn' + (isFuture(day) ? ' future' : '');
-  if (next === 'success') {
-    btn.classList.add('success');
-    btn.textContent = '✓';
-  } else if (next === 'fail') {
-    btn.classList.add('fail');
-    btn.textContent = '✕';
-  } else btn.textContent = '·';
+  btn.className = "daybtn" + (isFuture(day) ? " future" : "");
+  if (next === "success") {
+    btn.classList.add("success");
+    btn.textContent = "✓";
+  } else if (next === "fail") {
+    btn.classList.add("fail");
+    btn.textContent = "✕";
+  } else btn.textContent = "·";
 
   renderStats();
   renderStatusBanner();
@@ -1704,7 +1708,7 @@ function renderNotesView() {
       viewMonth === CURRENT_MONTH &&
       d === CURRENT_DAY;
     const fut = d > todayDay;
-    const dow = DOW[new Date(viewYear, viewMonth - 1, d).getDay()];
+    const dow = DOW[new Date(viewYear, viewMonth, d).getDay()];
     const safe = note
       ? note
           .replace(/&/g, "&amp;")
@@ -2341,26 +2345,31 @@ function openDayModal(day) {
 
 function setDayVerdict(day, verdict) {
   const cur = state.successDays[day];
-  const isToday = viewYear === CURRENT_YEAR && viewMonth === CURRENT_MONTH && day === CURRENT_DAY;
+  const isToday =
+    viewYear === CURRENT_YEAR &&
+    viewMonth === CURRENT_MONTH &&
+    day === CURRENT_DAY;
 
   // Streak protection when setting fail via day modal
-  if (verdict === 'fail' && cur !== 'fail' && isToday) {
+  if (verdict === "fail" && cur !== "fail" && isToday) {
     const streak = _computeCurrentStreak();
     if (streak > 0) {
-      const confirmBtn = document.getElementById('streakConfirmBtn');
-      const numEl = document.getElementById('streakConfirmNum');
-      const unitEl = document.getElementById('streakConfirmUnit');
-      const msgEl = document.getElementById('streakConfirmMsg');
+      const confirmBtn = document.getElementById("streakConfirmBtn");
+      const numEl = document.getElementById("streakConfirmNum");
+      const unitEl = document.getElementById("streakConfirmUnit");
+      const msgEl = document.getElementById("streakConfirmMsg");
       if (numEl) numEl.textContent = streak;
-      if (unitEl) unitEl.textContent = `day${streak !== 1 ? 's' : ''} at stake`;
-      if (msgEl) msgEl.textContent = `You have a ${streak}-day streak. Marking today as failed will reset it to zero. Are you absolutely sure?`;
-      if (confirmBtn) confirmBtn.onclick = () => {
-        closeModal('streakConfirmModal');
-        _applyVerdict(day, verdict);
-      };
+      if (unitEl) unitEl.textContent = `day${streak !== 1 ? "s" : ""} at stake`;
+      if (msgEl)
+        msgEl.textContent = `You have a ${streak}-day streak. Marking today as failed will reset it to zero. Are you absolutely sure?`;
+      if (confirmBtn)
+        confirmBtn.onclick = () => {
+          closeModal("streakConfirmModal");
+          _applyVerdict(day, verdict);
+        };
       // Close day modal first so confirm sits on top
-      closeModal('dayModal');
-      openModal('streakConfirmModal');
+      closeModal("dayModal");
+      openModal("streakConfirmModal");
       return;
     }
   }
@@ -2428,24 +2437,33 @@ function goToToday() {
 }
 
 function showView(name) {
-  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-  document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
-  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-  document.getElementById('view-' + name).classList.add('active');
-  document.getElementById('nav-' + name).classList.add('active');
-  const tabBtn = document.getElementById('tab-' + name);
-  if (tabBtn) tabBtn.classList.add('active');
-  if (name === 'progress') { renderProgressView(); renderSlipHistory(); }
-  if (name === 'calories') renderCalorieView();
-  if (name === 'body') renderBodyView();
-  if (name === 'notes') renderNotesView();
+  document
+    .querySelectorAll(".view")
+    .forEach((v) => v.classList.remove("active"));
+  document
+    .querySelectorAll(".nav-item")
+    .forEach((b) => b.classList.remove("active"));
+  document
+    .querySelectorAll(".tab-btn")
+    .forEach((b) => b.classList.remove("active"));
+  document.getElementById("view-" + name).classList.add("active");
+  document.getElementById("nav-" + name).classList.add("active");
+  const tabBtn = document.getElementById("tab-" + name);
+  if (tabBtn) tabBtn.classList.add("active");
+  if (name === "progress") {
+    renderProgressView();
+    renderSlipHistory();
+  }
+  if (name === "calories") renderCalorieView();
+  if (name === "body") renderBodyView();
+  if (name === "notes") renderNotesView();
   // Auto-close sidebar on mobile after selecting a view
   if (window.innerWidth <= 640) {
-    const sidebar = document.getElementById('sidebar');
-    const backdrop = document.getElementById('mobileBackdrop');
-    sidebar.classList.remove('mobile-open');
-    if (backdrop) backdrop.classList.add('hidden');
-    document.body.style.overflow = '';
+    const sidebar = document.getElementById("sidebar");
+    const backdrop = document.getElementById("mobileBackdrop");
+    sidebar.classList.remove("mobile-open");
+    if (backdrop) backdrop.classList.add("hidden");
+    document.body.style.overflow = "";
   }
 }
 
@@ -2630,14 +2648,18 @@ function uid() {
  * Compute the current streak (consecutive success days ending at today or yesterday)
  */
 function _computeCurrentStreak() {
-  const isViewToday = viewYear === CURRENT_YEAR && viewMonth === CURRENT_MONTH && viewDay === CURRENT_DAY;
+  const isViewToday =
+    viewYear === CURRENT_YEAR &&
+    viewMonth === CURRENT_MONTH &&
+    viewDay === CURRENT_DAY;
   const todayVerdict = state.successDays[CURRENT_DAY];
   if (!isViewToday) return 0; // only compute for current month
-  if (todayVerdict === 'fail') return 0;
-  const streakStart = todayVerdict !== 'success' ? CURRENT_DAY - 1 : CURRENT_DAY;
+  if (todayVerdict === "fail") return 0;
+  const streakStart =
+    todayVerdict !== "success" ? CURRENT_DAY - 1 : CURRENT_DAY;
   let streak = 0;
   for (let d = streakStart; d >= 1; d--) {
-    if (state.successDays[d] === 'success') streak++;
+    if (state.successDays[d] === "success") streak++;
     else break;
   }
   return streak;
@@ -2648,7 +2670,8 @@ function _computeCurrentStreak() {
  * Returns { recentDays, failCount, successCount, unmarkedCount, recentFailStreak, recentSuccStreak }
  */
 function computeSlipState() {
-  const isCurrentMonth = viewYear === CURRENT_YEAR && viewMonth === CURRENT_MONTH;
+  const isCurrentMonth =
+    viewYear === CURRENT_YEAR && viewMonth === CURRENT_MONTH;
   const today = isCurrentMonth ? CURRENT_DAY : DAYS_IN_VIEW();
   const recentDays = [];
   for (let i = 6; i >= 0; i--) {
@@ -2659,19 +2682,41 @@ function computeSlipState() {
     recentDays.push({ day: d, verdict, isToday });
   }
 
-  let failCount = 0, successCount = 0, unmarkedCount = 0;
-  let recentFailStreak = 0, recentSuccStreak = 0;
-  let curFail = 0, curSucc = 0;
+  let failCount = 0,
+    successCount = 0,
+    unmarkedCount = 0;
+  let recentFailStreak = 0,
+    recentSuccStreak = 0;
+  let curFail = 0,
+    curSucc = 0;
 
   recentDays.forEach(({ day, verdict }) => {
-    if (verdict === 'fail') { failCount++; curFail++; curSucc = 0; }
-    else if (verdict === 'success') { successCount++; curSucc++; curFail = 0; }
-    else { unmarkedCount++; curFail = 0; curSucc = 0; }
+    if (verdict === "fail") {
+      failCount++;
+      curFail++;
+      curSucc = 0;
+    } else if (verdict === "success") {
+      successCount++;
+      curSucc++;
+      curFail = 0;
+    } else {
+      unmarkedCount++;
+      curFail = 0;
+      curSucc = 0;
+    }
     recentFailStreak = Math.max(recentFailStreak, curFail);
     recentSuccStreak = Math.max(recentSuccStreak, curSucc);
   });
 
-  return { recentDays, failCount, successCount, unmarkedCount, recentFailStreak, recentSuccStreak, today };
+  return {
+    recentDays,
+    failCount,
+    successCount,
+    unmarkedCount,
+    recentFailStreak,
+    recentSuccStreak,
+    today,
+  };
 }
 
 /**
@@ -2679,19 +2724,20 @@ function computeSlipState() {
  * States: fire (≥ 3-day streak), slipping (fail yesterday or today), broken (just failed), neutral
  */
 function renderStatusBanner() {
-  const banner = document.getElementById('statusBanner');
-  const iconEl = document.getElementById('statusBannerIcon');
-  const titleEl = document.getElementById('statusBannerTitle');
-  const subEl = document.getElementById('statusBannerSub');
+  const banner = document.getElementById("statusBanner");
+  const iconEl = document.getElementById("statusBannerIcon");
+  const titleEl = document.getElementById("statusBannerTitle");
+  const subEl = document.getElementById("statusBannerSub");
   if (!banner || !iconEl || !titleEl || !subEl) return;
 
-  const isCurrentMonth = viewYear === CURRENT_YEAR && viewMonth === CURRENT_MONTH;
+  const isCurrentMonth =
+    viewYear === CURRENT_YEAR && viewMonth === CURRENT_MONTH;
   if (!isCurrentMonth) {
     // Looking at a past/future month — neutral
-    banner.className = 'status-banner state-neutral';
-    iconEl.textContent = '\uD83D\uDCCB';
+    banner.className = "status-banner state-neutral";
+    iconEl.textContent = "\uD83D\uDCCB";
     titleEl.textContent = `${MONTH_NAMES[viewMonth]} ${viewYear}`;
-    subEl.textContent = 'Viewing a different month';
+    subEl.textContent = "Viewing a different month";
     return;
   }
 
@@ -2700,62 +2746,83 @@ function renderStatusBanner() {
   const yesterdayVerdict = state.successDays[CURRENT_DAY - 1];
 
   // Count today's done habits
-  const todayApplicable = state.habits.filter(h => isHabitActiveOnDate(h, viewYear, viewMonth, CURRENT_DAY));
+  const todayApplicable = state.habits.filter((h) =>
+    isHabitActiveOnDate(h, viewYear, viewMonth, CURRENT_DAY)
+  );
   const todayMap = state.checks[CURRENT_DAY] || {};
-  const doneTodayCount = todayApplicable.filter(h => isDoneValue(todayMap[h.id])).length;
+  const doneTodayCount = todayApplicable.filter((h) =>
+    isDoneValue(todayMap[h.id])
+  ).length;
   const totalTodayCount = todayApplicable.length;
   const pendingCount = totalTodayCount - doneTodayCount;
 
   let state_name, icon, title, sub;
 
-  if (todayVerdict === 'fail') {
+  if (todayVerdict === "fail") {
     // Today marked as failed
-    state_name = 'state-broken';
-    icon = '\uD83D\uDEA8';
-    title = 'Today Marked as Failed';
-    sub = 'You broke the chain today. Tomorrow is a new day — start fresh.';
-  } else if (yesterdayVerdict === 'fail' && todayVerdict !== 'success') {
+    state_name = "state-broken";
+    icon = "\uD83D\uDEA8";
+    title = "Today Marked as Failed";
+    sub = "You broke the chain today. Tomorrow is a new day — start fresh.";
+  } else if (yesterdayVerdict === "fail" && todayVerdict !== "success") {
     // Yesterday failed, today not yet recovered
     const { failCount } = computeSlipState();
-    state_name = 'state-broken';
-    icon = '\u26A0\uFE0F';
-    title = failCount >= 3 ? `${failCount} Fails in the Last Week` : 'Streak Broken Yesterday';
-    sub = failCount >= 3
-      ? `You\'ve failed ${failCount} of the last 7 days — this is a pattern. Break it today.`
-      : 'Yesterday you fell off. Mark today as successful to recover.';
+    state_name = "state-broken";
+    icon = "\u26A0\uFE0F";
+    title =
+      failCount >= 3
+        ? `${failCount} Fails in the Last Week`
+        : "Streak Broken Yesterday";
+    sub =
+      failCount >= 3
+        ? `You\'ve failed ${failCount} of the last 7 days — this is a pattern. Break it today.`
+        : "Yesterday you fell off. Mark today as successful to recover.";
   } else if (streak >= 3) {
     // On fire
-    state_name = 'state-fire';
-    icon = '\uD83D\uDD25';
+    state_name = "state-fire";
+    icon = "\uD83D\uDD25";
     title = `${streak}-Day Streak \u2014 On Fire!`;
-    sub = pendingCount > 0
-      ? `${pendingCount} habit${pendingCount !== 1 ? 's' : ''} left today. Keep going!`
-      : 'All habits done \u2014 mark today as successful!';
+    sub =
+      pendingCount > 0
+        ? `${pendingCount} habit${
+            pendingCount !== 1 ? "s" : ""
+          } left today. Keep going!`
+        : "All habits done \u2014 mark today as successful!";
   } else if (pendingCount > 0 && totalTodayCount > 0) {
     // Some habits remain
     const { failCount } = computeSlipState();
     if (failCount >= 2) {
-      state_name = 'state-slipping';
-      icon = '\u26A0\uFE0F';
+      state_name = "state-slipping";
+      icon = "\u26A0\uFE0F";
       title = `Slipping — ${failCount} Fails This Week`;
-      sub = `${pendingCount} habit${pendingCount !== 1 ? 's' : ''} still pending. You\'ve failed ${failCount} days recently — don\'t add to that.`;
+      sub = `${pendingCount} habit${
+        pendingCount !== 1 ? "s" : ""
+      } still pending. You\'ve failed ${failCount} days recently — don\'t add to that.`;
     } else {
-      state_name = 'state-slipping';
-      icon = '\uD83D\uDCCB';
-      title = `${pendingCount} Habit${pendingCount !== 1 ? 's' : ''} Remaining Today`;
-      sub = streak > 0 ? `You have a ${streak}-day streak to protect.` : 'Complete your habits to build momentum.';
+      state_name = "state-slipping";
+      icon = "\uD83D\uDCCB";
+      title = `${pendingCount} Habit${
+        pendingCount !== 1 ? "s" : ""
+      } Remaining Today`;
+      sub =
+        streak > 0
+          ? `You have a ${streak}-day streak to protect.`
+          : "Complete your habits to build momentum.";
     }
   } else if (doneTodayCount === totalTodayCount && totalTodayCount > 0) {
     // All done
-    state_name = 'state-fire';
-    icon = '\u2705';
-    title = 'All Done for Today!';
-    sub = streak > 0 ? `${streak}-day streak and counting. Mark today as successful!` : 'Great work — mark today as successful!';
+    state_name = "state-fire";
+    icon = "\u2705";
+    title = "All Done for Today!";
+    sub =
+      streak > 0
+        ? `${streak}-day streak and counting. Mark today as successful!`
+        : "Great work — mark today as successful!";
   } else {
-    state_name = 'state-neutral';
-    icon = '\uD83D\uDCCB';
-    title = 'Track Your Day';
-    sub = 'Tap habits below to check them off.';
+    state_name = "state-neutral";
+    icon = "\uD83D\uDCCB";
+    title = "Track Your Day";
+    sub = "Tap habits below to check them off.";
   }
 
   banner.className = `status-banner ${state_name}`;
@@ -2769,31 +2836,49 @@ function renderStatusBanner() {
  * Inserts it into #slipHistoryPanel if it exists.
  */
 function renderSlipHistory() {
-  let panel = document.getElementById('slipHistoryPanel');
+  let panel = document.getElementById("slipHistoryPanel");
   if (!panel) {
     // Create and insert after .progress-heroes
-    panel = document.createElement('div');
-    panel.id = 'slipHistoryPanel';
-    const heroes = document.querySelector('#view-progress .progress-heroes');
+    panel = document.createElement("div");
+    panel.id = "slipHistoryPanel";
+    const heroes = document.querySelector("#view-progress .progress-heroes");
     if (heroes) heroes.after(panel);
     else {
-      const pv = document.getElementById('view-progress');
+      const pv = document.getElementById("view-progress");
       if (pv) pv.prepend(panel);
     }
   }
 
-  const { recentDays, failCount, successCount, unmarkedCount, recentFailStreak, recentSuccStreak } = computeSlipState();
-  const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  const isCurrentMonth = viewYear === CURRENT_YEAR && viewMonth === CURRENT_MONTH;
+  const {
+    recentDays,
+    failCount,
+    successCount,
+    unmarkedCount,
+    recentFailStreak,
+    recentSuccStreak,
+  } = computeSlipState();
+  const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const isCurrentMonth =
+    viewYear === CURRENT_YEAR && viewMonth === CURRENT_MONTH;
 
   // Build chips
-  let chipsHtml = '';
+  let chipsHtml = "";
   recentDays.forEach(({ day, verdict, isToday }) => {
     const date = new Date(viewYear, viewMonth, day);
     const dowLabel = DOW[date.getDay()];
-    let dotCls = verdict === 'success' ? 's-success' : verdict === 'fail' ? 's-fail' : 's-unmarked';
-    if (isToday) dotCls += ' s-today';
-    const icon = verdict === 'success' ? '\u2713' : verdict === 'fail' ? '\u2715' : String(day);
+    let dotCls =
+      verdict === "success"
+        ? "s-success"
+        : verdict === "fail"
+        ? "s-fail"
+        : "s-unmarked";
+    if (isToday) dotCls += " s-today";
+    const icon =
+      verdict === "success"
+        ? "\u2713"
+        : verdict === "fail"
+        ? "\u2715"
+        : String(day);
     chipsHtml += `<div class="slip-chip">
       <div class="slip-chip-dot ${dotCls}" title="${MONTH_NAMES[viewMonth]} ${day}">${icon}</div>
       <div class="slip-chip-label">${dowLabel}</div>
@@ -2803,26 +2888,26 @@ function renderSlipHistory() {
   // Build warning
   let warnCls, warnText;
   if (failCount === 0 && successCount >= recentDays.length - 1) {
-    warnCls = 'warn-good';
-    warnText = '\u2714 Great pattern — you\'ve been consistent this week!';
+    warnCls = "warn-good";
+    warnText = "\u2714 Great pattern — you've been consistent this week!";
   } else if (recentFailStreak >= 3) {
-    warnCls = 'warn-danger';
+    warnCls = "warn-danger";
     warnText = `\u26A8 Danger: You\'ve failed ${recentFailStreak} days in a row. This is becoming a habit — of the wrong kind.`;
   } else if (failCount >= 3) {
-    warnCls = 'warn-danger';
+    warnCls = "warn-danger";
     warnText = `\u26A8 You\'ve failed ${failCount} of the last 7 days. That\'s not a bad day, that\'s a pattern.`;
   } else if (failCount === 2) {
-    warnCls = 'warn-caution';
+    warnCls = "warn-caution";
     warnText = `\u26A0 Two fails in 7 days. Don\'t let it become three.`;
   } else if (failCount === 1) {
-    warnCls = 'warn-caution';
+    warnCls = "warn-caution";
     warnText = `\u26A0 One slip this week. Keep it isolated — don\'t let it spread.`;
   } else if (!isCurrentMonth) {
-    warnCls = 'warn-neutral';
-    warnText = 'Viewing a past month.';
+    warnCls = "warn-neutral";
+    warnText = "Viewing a past month.";
   } else {
-    warnCls = 'warn-neutral';
-    warnText = 'Not enough data yet for this week.';
+    warnCls = "warn-neutral";
+    warnText = "Not enough data yet for this week.";
   }
 
   panel.innerHTML = `<div class="slip-history">
@@ -2885,6 +2970,9 @@ Object.assign(window, {
   openAvgRangeModal,
   toggleAvgRangeFields,
   saveAvgRangeSettings,
+  deleteBodyPhoto,
+  deleteBodyPhotoFromModal,
+  showBodyHistory,
   // anti-slip
   renderStatusBanner,
   renderSlipHistory,
@@ -2912,8 +3000,10 @@ function updateResponsiveSingleDay() {
       render();
     }
   } catch (e) {
-    console.warn('responsive switch failed', e);
+    console.warn("responsive switch failed", e);
   }
 }
-window.addEventListener('resize', () => { updateResponsiveSingleDay(); });
+window.addEventListener("resize", () => {
+  updateResponsiveSingleDay();
+});
 updateResponsiveSingleDay();
