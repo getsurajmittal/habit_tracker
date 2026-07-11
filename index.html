@@ -205,10 +205,10 @@
           <div class="ppill-label">kcal today</div>
           <div class="ppill-sub" id="pCalSub">— goal</div>
         </div>
-        <div class="ppill">
+        <div class="ppill" id="pCalAvgPill" style="cursor: pointer;" onclick="openAvgRangeModal()">
           <div class="ppill-val dim" id="pCalAvg">—</div>
           <div class="ppill-label">daily avg</div>
-          <div class="ppill-sub">this month</div>
+          <div class="ppill-sub" id="pCalAvgSub">this month</div>
         </div>
       </div>
 
@@ -458,6 +458,42 @@
 
 <!-- Mobile backdrop for sidebar drawer -->
 <div id="mobileBackdrop" class="mobile-backdrop hidden" onclick="toggleSidebar()"></div>
+
+<!-- ── CALORIE AVERAGE RANGE MODAL ── -->
+<div class="modal-overlay hidden" id="avgRangeModal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">Calorie Average Range</div>
+      <button class="modal-close" onclick="closeModal('avgRangeModal')">✕</button>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Range Mode</label>
+      <select class="form-input" id="avgRangeType" onchange="toggleAvgRangeFields()">
+        <option value="month">Month-to-date (Whole Month)</option>
+        <option value="days">Last N Days</option>
+        <option value="custom">Custom Range</option>
+      </select>
+    </div>
+    <div class="form-group hidden" id="avgDaysCountGroup">
+      <label class="form-label">Number of Days</label>
+      <input class="form-input" id="avgDaysCount" type="number" min="1" max="31" value="7">
+    </div>
+    <div class="form-row hidden" id="avgCustomGroup">
+      <div class="form-half">
+        <label class="form-label">Start Day</label>
+        <input class="form-input" id="avgStartDay" type="number" min="1" max="31" value="1">
+      </div>
+      <div class="form-half">
+        <label class="form-label">End Day</label>
+        <input class="form-input" id="avgEndDay" type="number" min="1" max="31" value="15">
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-ghost" onclick="closeModal('avgRangeModal')">Cancel</button>
+      <button class="btn-primary" onclick="saveAvgRangeSettings()">Apply</button>
+    </div>
+  </div>
+</div>
 
 <!-- ── BODY HISTORY MODAL ── -->
 <div class="modal-overlay hidden" id="bodyHistoryModal">

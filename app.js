@@ -35,6 +35,21 @@ let viewMonth = CURRENT_MONTH;
 let viewDay = CURRENT_DAY;
 let singleDayView = true; // show one day by default
 
+let avgRangeConfig = {
+  type: "month", // "month" | "days" | "custom"
+  daysCount: 7,
+  startDay: 1,
+  endDay: 15
+};
+try {
+  const savedAvgRange = localStorage.getItem("tracker_avg_range_config");
+  if (savedAvgRange) {
+    avgRangeConfig = Object.assign(avgRangeConfig, JSON.parse(savedAvgRange));
+  }
+} catch (e) {
+  console.warn("Failed to load tracker_avg_range_config:", e);
+}
+
 const TODAY = NOW;
 const YEAR = CURRENT_YEAR;
 const MONTH = CURRENT_MONTH;
@@ -2103,22 +2118,44 @@ function renderProgressView() {
   }
   if (pCalSubEl) pCalSubEl.textContent = `of ${calGoal} kcal`;
 
-  // Monthly calorie average
+  // Daily calorie average (respects custom range configuration)
+  let startDay = 1;
+  let endDay = visibleDays;
+  if (avgRangeConfig.type === "days") {
+    startDay = Math.max(1, visibleDays - avgRangeConfig.daysCount + 1);
+  } else if (avgRangeConfig.type === "custom") {
+    startDay = Math.max(1, avgRangeConfig.startDay);
+    endDay = Math.min(visibleDays, avgRangeConfig.endDay);
+  }
+
   let calDayCount = 0,
     calMonthTotal = 0;
-  for (let d = 1; d <= visibleDays; d++) {
-    const dayCalSum = (state.calories[d] || []).reduce(
-      (s, e) => s + (e.cal || 0),
-      0
-    );
-    if (dayCalSum > 0) {
-      calDayCount++;
-      calMonthTotal += dayCalSum;
+  if (startDay <= endDay) {
+    for (let d = startDay; d <= endDay; d++) {
+      const dayCalSum = (state.calories[d] || []).reduce(
+        (s, e) => s + (e.cal || 0),
+        0
+      );
+      if (dayCalSum > 0) {
+        calDayCount++;
+        calMonthTotal += dayCalSum;
+      }
     }
   }
   const calAvg = calDayCount > 0 ? Math.round(calMonthTotal / calDayCount) : 0;
   const pCalAvgEl = document.getElementById("pCalAvg");
   if (pCalAvgEl) pCalAvgEl.textContent = calAvg > 0 ? String(calAvg) : "\u2014";
+
+  const pCalAvgSubEl = document.getElementById("pCalAvgSub");
+  if (pCalAvgSubEl) {
+    if (avgRangeConfig.type === "month") {
+      pCalAvgSubEl.textContent = "this month";
+    } else if (avgRangeConfig.type === "days") {
+      pCalAvgSubEl.textContent = `last ${avgRangeConfig.daysCount} days`;
+    } else if (avgRangeConfig.type === "custom") {
+      pCalAvgSubEl.textContent = `days ${avgRangeConfig.startDay}-${avgRangeConfig.endDay}`;
+    }
+  }
 
   // Streak — based on previous day; if today unmarked count from yesterday; fail resets to 0
   let streak = 0,
@@ -2461,6 +2498,41 @@ function openModal(id) {
 }
 function closeModal(id) {
   document.getElementById(id).classList.add("hidden");
+}
+
+function openAvgRangeModal() {
+  document.getElementById("avgRangeType").value = avgRangeConfig.type;
+  document.getElementById("avgDaysCount").value = avgRangeConfig.daysCount;
+  document.getElementById("avgStartDay").value = avgRangeConfig.startDay;
+  document.getElementById("avgEndDay").value = avgRangeConfig.endDay;
+  toggleAvgRangeFields();
+  openModal("avgRangeModal");
+}
+function toggleAvgRangeFields() {
+  const type = document.getElementById("avgRangeType").value;
+  const daysGroup = document.getElementById("avgDaysCountGroup");
+  const customGroup = document.getElementById("avgCustomGroup");
+  if (type === "days") {
+    daysGroup.classList.remove("hidden");
+    customGroup.classList.add("hidden");
+  } else if (type === "custom") {
+    daysGroup.classList.add("hidden");
+    customGroup.classList.remove("hidden");
+  } else {
+    daysGroup.classList.add("hidden");
+    customGroup.classList.add("hidden");
+  }
+}
+function saveAvgRangeSettings() {
+  const type = document.getElementById("avgRangeType").value;
+  const daysCount = parseInt(document.getElementById("avgDaysCount").value) || 7;
+  const startDay = parseInt(document.getElementById("avgStartDay").value) || 1;
+  const endDay = parseInt(document.getElementById("avgEndDay").value) || 15;
+
+  avgRangeConfig = { type, daysCount, startDay, endDay };
+  localStorage.setItem("tracker_avg_range_config", JSON.stringify(avgRangeConfig));
+  closeModal("avgRangeModal");
+  renderProgressView();
 }
 
 // ── THEME ───────────────────────────────────────────────────────────────────
@@ -2810,6 +2882,9 @@ Object.assign(window, {
   toggleChat,
   clearChat,
   toggleDowBtn,
+  openAvgRangeModal,
+  toggleAvgRangeFields,
+  saveAvgRangeSettings,
   // anti-slip
   renderStatusBanner,
   renderSlipHistory,

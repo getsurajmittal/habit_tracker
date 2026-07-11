@@ -1105,6 +1105,16 @@ button, .chk, .daybtn, .notebtn, .habit-btn {
 .theme-toggle-btn{font-size:11px;padding:8px 12px;border-radius:999px;border:1px solid var(--border2);color:var(--text);background:rgba(255,255,255,.04);transition:all .15s}
 .theme-toggle-btn:hover{background:rgba(255,255,255,.08)}
 
+#pCalAvgPill {
+  transition: all 0.2s ease;
+}
+#pCalAvgPill:hover {
+  border-color: var(--green) !important;
+  background: var(--surface3) !important;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 232, 122, 0.1);
+}
+
 /* ── RESPONSIVE ── */
 @media(max-width:640px){
   .sidebar{display:none !important}
