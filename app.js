@@ -164,18 +164,12 @@ async function initFirebase(config, { verify = false } = {}) {
   );
 
   const app = initializeApp(config, config.projectId); // unique name prevents re-init error
-  db = fs.getFirestore(app);
-  // Enable IndexedDB offline persistence where supported
-  try {
-    await fs.enableIndexedDbPersistence(db);
-    console.log("Firestore IndexedDB persistence enabled");
-  } catch (err) {
-    // Common cases: multiple tabs (failed-precondition) or unsupported browser (unimplemented)
-    console.warn(
-      "Could not enable IndexedDB persistence:",
-      err.code || err.message || err
-    );
-  }
+  // IndexedDB offline cache shared across tabs (falls back to memory where unsupported)
+  db = fs.initializeFirestore(app, {
+    localCache: fs.persistentLocalCache({
+      tabManager: fs.persistentMultipleTabManager(),
+    }),
+  });
 
   const habitsRef = fs.doc(db, "tracker", "habits");
   // A newly pasted config is checked with a real read so a bad one surfaces in the setup screen
@@ -193,7 +187,7 @@ async function initFirebase(config, { verify = false } = {}) {
   fs.onSnapshot(habitsRef, (snap) => {
     if (snap.exists()) {
       state.habits = (snap.data().list || []).sort((a, b) => a.order - b.order);
-      render();
+      scheduleRender();
     } else if (!snap.metadata.fromCache) {
       // First run against an empty database: seed default habits
       state.habits = DEFAULT_HABITS.map((h, i) => ({
@@ -211,7 +205,7 @@ async function initFirebase(config, { verify = false } = {}) {
       state.globalNote = snap.data().monthNote || "";
       state.calorieGoal = snap.data().calorieGoal || 2000;
     }
-    render();
+    scheduleRender();
   });
 
   render();
@@ -230,7 +224,7 @@ function subscribeToMonth(y, m) {
     fs.doc(db, "tracker", MONTH_DOC_ID),
     (snap) => {
       applyMonthData(snap.exists() ? snap.data() : {});
-      render();
+      scheduleRender();
       if (!_pendingWrites && !Object.keys(_queuedFields).length)
         setSyncStatus("synced");
     },
@@ -280,7 +274,7 @@ async function loadStreakCarry(y, m) {
   }
   if (MONTH_DOC_ID !== forDoc || carry === streakCarry) return;
   streakCarry = carry;
-  render();
+  scheduleRender();
 }
 
 // ── DEFAULT HABITS ────────────────────────────────────────────────────────────
@@ -668,7 +662,8 @@ async function handlePhotoUpload(event) {
 
   _setPhotoLoading(true);
   try {
-    const { base64, mimeType } = await _fileToBase64(file);
+    // Phone photos are several MB; ~1024px is plenty for food recognition
+    const { base64, mimeType } = await _resizeImage(file, 1024, 1024, 0.8);
     const results = await estimateCaloriesFromPhoto(base64, mimeType);
     if (!Array.isArray(results) || !results.length) {
       alert(
@@ -685,48 +680,32 @@ async function handlePhotoUpload(event) {
   }
 }
 
-function _fileToBase64(file) {
+// Downscales an image file to fit within maxWidth x maxHeight and re-encodes
+// it as JPEG. Returns { base64, mimeType }.
+function _resizeImage(file, maxWidth, maxHeight, quality) {
   return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = reader.result;
-      const [, base64] = dataUrl.split(",");
-      resolve({ base64, mimeType: file.type, dataUrl });
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
-
-async function _resizeImageForUpload(
-  file,
-  maxWidth = 640,
-  maxHeight = 640,
-  quality = 0.5
-) {
-  const { dataUrl } = await _fileToBase64(file);
-  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
     const img = new Image();
     img.onload = () => {
-      const width = img.width;
-      const height = img.height;
-      const ratio = Math.min(1, maxWidth / width, maxHeight / height);
+      URL.revokeObjectURL(url);
+      const ratio = Math.min(1, maxWidth / img.width, maxHeight / img.height);
       const canvas = document.createElement("canvas");
-      canvas.width = Math.round(width * ratio);
-      canvas.height = Math.round(height * ratio);
+      canvas.width = Math.round(img.width * ratio);
+      canvas.height = Math.round(img.height * ratio);
       const ctx = canvas.getContext("2d");
       if (!ctx) {
         reject(new Error("Could not create canvas context"));
         return;
       }
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      const compressedDataUrl = canvas.toDataURL("image/jpeg", quality);
-      const mimeType = "image/jpeg";
-      const base64 = compressedDataUrl.split(",")[1];
-      resolve({ dataUrl: compressedDataUrl, base64, mimeType });
+      const base64 = canvas.toDataURL("image/jpeg", quality).split(",")[1];
+      resolve({ base64, mimeType: "image/jpeg" });
     };
-    img.onerror = () => reject(new Error("Failed to load image for resizing"));
-    img.src = dataUrl;
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Could not read that image"));
+    };
+    img.src = url;
   });
 }
 
@@ -1078,15 +1057,36 @@ function clearChat() {
 
 // ── RENDER ────────────────────────────────────────────────────────────────────
 
+let currentView = "grid";
+
+// Renders the shared header bits plus only the visible view; showView()
+// renders a view when it becomes visible.
 function render() {
   renderLabels();
-  renderGrid();
-  renderProgress();
-  renderHabitsList();
   renderStats();
-  renderCalorieView();
-  renderNotesView();
   renderStatusBanner(); // anti-slip banner
+  renderView(currentView);
+}
+
+function renderView(name) {
+  if (name === "grid") renderGrid();
+  else if (name === "progress") {
+    renderProgressView();
+    renderSlipHistory();
+  } else if (name === "habits") renderHabitsList();
+  else if (name === "calories") renderCalorieView();
+  else if (name === "notes") renderNotesView();
+}
+
+// Coalesces bursts of snapshot callbacks (e.g. at startup) into one render
+let _renderQueued = false;
+function scheduleRender() {
+  if (_renderQueued) return;
+  _renderQueued = true;
+  requestAnimationFrame(() => {
+    _renderQueued = false;
+    render();
+  });
 }
 
 function renderLabels() {
@@ -1467,7 +1467,6 @@ function _doCycleDay(day, btn, next) {
 
   renderStats();
   renderStatusBanner();
-  renderProgressView();
   saveMonthFields({ [`successDays.${day}`]: next });
 }
 
@@ -1517,9 +1516,7 @@ function saveNote() {
     saveMonthFields({ [`notes.${activeNoteDay}`]: v || undefined });
   }
   closeModal("noteModal");
-  renderGrid();
-  renderProgressView();
-  renderNotesView();
+  renderView(currentView);
 }
 
 // removed per-habit month note function — now using a single month note
@@ -1836,24 +1833,6 @@ function renderStats() {
 
   document.getElementById("hStreak").textContent = streakAsOf(viewDay);
 
-  // Calories for the viewed day — shown in grid header
-  const calEntries = state.calories[viewDay] || [];
-  const calTotal = calEntries.reduce((s, e) => s + (e.cal || 0), 0);
-  const calDash = document.getElementById("hCalDash");
-  if (calDash) calDash.textContent = calTotal > 0 ? String(calTotal) : "—";
-}
-
-// ── PROGRESS VIEW ─────────────────────────────────────────────────────────────
-
-function renderProgress() {
-  renderProgressView();
-}
-
-function renderProgressView() {
-  const habits = state.habits;
-  const n = habits.length;
-  if (!n) return;
-
   // Month bar (based on viewed month)
   const daysIn = DAYS_IN_VIEW();
   const visibleDays = isCurrentMonth() ? CURRENT_DAY : daysIn;
@@ -1864,6 +1843,23 @@ function renderProgressView() {
     daysIn
   )} of ${daysIn}`;
   document.getElementById("monthPct").textContent = mPct + "%";
+
+  // Calories for the viewed day — shown in grid header
+  const calEntries = state.calories[viewDay] || [];
+  const calTotal = calEntries.reduce((s, e) => s + (e.cal || 0), 0);
+  const calDash = document.getElementById("hCalDash");
+  if (calDash) calDash.textContent = calTotal > 0 ? String(calTotal) : "—";
+}
+
+// ── PROGRESS VIEW ─────────────────────────────────────────────────────────────
+
+function renderProgressView() {
+  const habits = state.habits;
+  const n = habits.length;
+  if (!n) return;
+
+  const daysIn = DAYS_IN_VIEW();
+  const visibleDays = isCurrentMonth() ? CURRENT_DAY : daysIn;
 
   // Success rate = success days / days passed so far
   let succRateCount = 0;
@@ -2179,9 +2175,8 @@ function _applyVerdict(day, verdict) {
   saveMonthFields({ [`successDays.${day}`]: state.successDays[day] });
   renderStats();
   renderStatusBanner();
-  renderProgressView();
+  renderView(currentView);
   openDayModal(day);
-  renderGridBody();
 }
 
 // ── NAV ───────────────────────────────────────────────────────────────────────
@@ -2294,12 +2289,8 @@ function showView(name) {
   document.getElementById("nav-" + name).classList.add("active");
   const tabBtn = document.getElementById("tab-" + name);
   if (tabBtn) tabBtn.classList.add("active");
-  if (name === "progress") {
-    renderProgressView();
-    renderSlipHistory();
-  }
-  if (name === "calories") renderCalorieView();
-  if (name === "notes") renderNotesView();
+  currentView = name;
+  renderView(name);
   // Auto-close sidebar on mobile after selecting a view
   if (window.innerWidth <= 640) {
     const sidebar = document.getElementById("sidebar");

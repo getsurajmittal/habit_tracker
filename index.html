@@ -6,16 +6,10 @@
 <title>Suraj · Daily Tracker</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css" id="mainCss">
-<script>
-  // Cache-bust CSS immediately so mobile/desktop see latest styles during development
-  (function(){
-    try{
-      const el = document.getElementById('mainCss');
-      if(el){ el.href = 'style.css?v=' + Date.now(); }
-    }catch(e){console.warn('cache-bust css failed',e)}
-  })();
-</script>
+<link rel="preconnect" href="https://www.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://firestore.googleapis.com" crossorigin>
+<link rel="stylesheet" href="style.css">
+<script src="app.js" defer></script>
 </head>
 <body>
 
@@ -578,14 +572,5 @@
     </div>
   </div>
 </div>
-<script>
-  // Load module script with cache-busting query param to ensure latest JS is fetched.
-  (function(){
-    const s = document.createElement('script');
-    s.src = 'app.js?v=' + Date.now();
-    s.defer = true;
-    document.body.appendChild(s);
-  })();
-</script>
 </body>
 </html>
