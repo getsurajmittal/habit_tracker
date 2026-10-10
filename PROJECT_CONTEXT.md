@@ -6,10 +6,11 @@ Paste this file's content into a new chat session to continue development.
 
 ## Stack
 
-- **Pure Vanilla JS (ES Modules)** — no build tools, no framework
-- **Firebase Firestore v10.12.0** — dynamic CDN import, IndexedDB persistence, real-time `onSnapshot`
-- **Gemini API** — `https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key=...`
-- **4 files + 1 context**: `index.html`, `app.js` (~2590 lines), `style.css` (~950 lines), `README.md`, `PROJECT_CONTEXT.md`
+- **Pure Vanilla JS** — no build tools, no framework. `app.js` is a classic deferred script; Firebase is pulled in with dynamic `import()`
+- **Firebase Firestore v10.12.0** (`FB_VERSION`) — module loaded once into `fs`, multi-tab IndexedDB cache (`persistentLocalCache` + `persistentMultipleTabManager`), real-time `onSnapshot`
+- **Gemini API** — `POST {GEMINI_API}/models/{model}:generateContent`, key sent in the `x-goog-api-key` header
+- **Files**: `index.html`, `app.js` (~2800 lines), `style.css` (~1100 lines), `README.md`, `PROJECT_CONTEXT.md`
+- **Hosting**: GitHub Pages from `main` (no cache-busting query strings; Pages revalidates after ~10 min, hard-refresh to see a deploy sooner)
 - **Local dev**: `python -m http.server 5500` from project root, open `http://localhost:5500`
 - **OS**: Windows. Git remote: `origin/main`
 
@@ -19,35 +20,60 @@ Paste this file's content into a new chat session to continue development.
 
 ```js
 let state = {
-  habits: [], // [{id, name, order, days, startDate, endDate}]  — stored in tracker/habits doc
-  checks: {}, // {day: {habitId: 'tick'|'cross'|'dash'}}
+  habits: [], // [{id, name, order, days, startDate, endDate}] — tracker/habits doc
+  checks: {}, // {day: {habitId: 'tick'|'cross'|'dash'}}  (legacy `true` = tick)
   successDays: {}, // {day: 'success'|'fail'}
   notes: {}, // {day: string}
   calories: {}, // {day: [{id, food, cal, time}]}
   calorieGoal: 2000,
+  markOrder: {}, // {day: [habitId, ...]} — order habits were first marked
 };
-state.globalNote = ""; // month-level note
+state.globalNote = ""; // Notes-view "Month Note", shared across months
 ```
 
-- Month data in Firestore doc `tracker/{YYYY-MM}` (checks, successDays, notes, calories, calorieGoal, monthNote)
-- Habits in `tracker/habits` — no categories (removed)
-- Firebase config stored in `localStorage` under key `tracker_fb_config`
-- Gemini API key: `localStorage` key `tracker_gemini_key`
-- Gemini model (auto-discovered & cached): `localStorage` key `tracker_gemini_model`
+| Firestore doc       | Contents                                                     |
+| ------------------- | ------------------------------------------------------------ |
+| `tracker/habits`    | `{list: [...habits]}`                                        |
+| `tracker/global`    | `{monthNote, calorieGoal}`                                   |
+| `tracker/{YYYY-MM}` | `checks, successDays, notes, calories, markOrder, year, month, updatedAt` |
+
+Older month docs may still contain a `bodyAnalysis` field from the removed Photo Check-ins feature; nothing reads it. Reset Month deletes it.
+
+localStorage keys: `tracker_fb_config`, `tracker_gemini_key`, `tracker_gemini_model` (auto-discovered), `tracker_avg_range_config`, `tracker_theme`.
 
 ---
 
-## Key State Variables
+## Saving (important)
+
+- Month edits call **`saveMonthFields({ "dotted.path": value })`** — only the changed fields are written (`setDoc(..., {merge: true})`); `undefined` deletes the field.
+  - e.g. `saveMonthFields({ [`checks.${day}.${habitId}`]: next, [`markOrder.${day}`]: [...] })`
+- Writes are queued **per doc ID** and flushed after 600 ms (`flushMonthFields`), and on `visibilitychange`/`pagehide`. Keying by doc means switching months mid-batch can't misdirect edits.
+- The short batch window is deliberate: the grid re-sorts marked habits on the next snapshot, and the delay lets the user tap a cell again (tick → cross → dash) before it moves.
+- `applyMonthData()` overlays still-queued edits on incoming snapshots so they don't flicker away.
+- `saveHabits()` / `saveGlobalNote()` replace their whole (small) docs and are **not awaited** — the local cache applies them immediately; awaiting would stall offline.
+- `trackWrite()` drives the sync indicator (`Synced` / `Saving…` / `Offline` / `Save failed`).
+
+---
+
+## Key State & Helpers
 
 ```js
-let viewYear, viewMonth, viewDay;   // what the user is currently viewing
-let singleDayView = true;           // single-day vs full-month grid
-const CURRENT_YEAR, CURRENT_MONTH, CURRENT_DAY;  // actual today
+let viewYear, viewMonth, viewDay;            // what the user is viewing
+let CURRENT_YEAR, CURRENT_MONTH, CURRENT_DAY; // real today — refreshed by syncToday()
+let singleDayView = true;
+let currentView = "grid";                     // only this view is rendered
+let streakCarry = 0;                          // success run at the end of earlier months
 ```
+
+- `isCurrentMonth()`, `isToday(day)`, `monthDocId(y, m)`, `DAYS_IN_VIEW()`, `isFuture(day)`
+- `setViewMonth(y, m)` — all month navigation goes through this (re-subscribes only on change)
+- `syncToday()` — runs every minute and on tab focus; rolls "today" over at midnight and follows along if the user was on today
+- `esc(str)` / `escMultiline(str)` — **use for any user/AI text interpolated into `innerHTML`**
+- `render()` = labels + stats + status banner + `renderView(currentView)`; snapshot callbacks use `scheduleRender()` to coalesce bursts
 
 ---
 
-## Views (Sidebar Navigation)
+## Views (Sidebar + mobile bottom tab bar)
 
 | ID              | Name                 | Nav button       |
 | --------------- | -------------------- | ---------------- |
@@ -57,147 +83,84 @@ const CURRENT_YEAR, CURRENT_MONTH, CURRENT_DAY;  // actual today
 | `view-calories` | Calorie Counter      | `nav-calories` ◈ |
 | `view-notes`    | Notes                | `nav-notes` ✎    |
 
-Selecting any nav item auto-closes the sidebar on mobile.
+Bottom tab IDs mirror these as `tab-*`. Selecting any nav item auto-closes the sidebar on mobile.
+
+---
+
+## Streaks
+
+- `successRunEndingAt(day)` — consecutive `success` days ending on `day`, plus `streakCarry` if the run reaches day 1
+- `streakAsOf(day)` — for today: unmarked counts up to yesterday, `fail` → 0; other days: run ending on that day
+- `_computeCurrentStreak()` — live streak as of real today (0 when viewing another month)
+- `loadStreakCarry(y, m)` — on month subscribe, walks back through previous month docs (usually one cached read)
+- Per-habit streaks (Progress view) skip non-scheduled days and stay within the viewed month
+- Streak protection: `confirmStreakBreak(onConfirm)` shows `#streakConfirmModal` before marking today failed with a running streak (used by `cycleDay` and `setDayVerdict`)
 
 ---
 
 ## Habit Scheduling
 
-Each habit can have:
-
 - `days`: array of JS `getDay()` ints (0=Sun…6=Sat) — null/empty = every day
-- `startDate`: ISO date string `"YYYY-MM-DD"` — habit hidden on dates before this
-- `endDate`: ISO date string — habit hidden after this (past marks preserved)
-
-**`isHabitActiveOnDate(habit, year, month, day)`** — returns true if the habit should appear on that date. Used in:
-
-- `renderGridBody()`: single-day view filters to applicable habits; multi-day view shows a dimmed striped cell for inactive day columns
-- `renderStats()` and `renderProgressView()`: Today hero counts only applicable habits
-- `renderProgressView()` habit streaks: non-applicable days are skipped (not streak-breaking)
-
-UI: Add/Edit Habit modal has Mon–Sun toggle buttons (`id="habitDowToggles"`) and Start/End date pickers. Schedule badge shown in Habits list.
+- `startDate` / `endDate`: `"YYYY-MM-DD"`; habit hidden outside the range (past marks preserved)
+- `isHabitActiveOnDate(habit, year, month, day)` filters the single-day grid, Today counts, and per-habit streaks; multi-day grid shows a striped `.td-inactive` cell
 
 ---
 
 ## Calorie Counter — 3 Entry Modes
 
-1. **Manual** — type food name + enter calories manually → click "+ Add" → records as-is
-2. **AI Text** — type food name → click ⚡ → AI returns `{food, calories, description}` → chip shows `"Food — ~250 kcal · serving detail"` → click "✓ Use" → **auto-records immediately** using AI food name + AI calories (no extra click needed)
-3. **Photo** — click 📷 → camera/file → Gemini vision returns array → confirmation modal → click "Add Selected" → records checked items
+All entries go through `logCalories([{food, cal}])` (timestamps, saves, re-renders).
 
-`estimateCaloriesFromText` Gemini prompt returns `{food, calories, description}`.
-`estimateCaloriesFromPhoto` returns `[{food, calories, description}, ...]`.
-`acceptAISuggestion()` now directly pushes to `state.calories[viewDay]` and calls `scheduleSave()`.
+1. **Manual** — food + kcal → "+ Add"
+2. **AI Text** — food → ⚡ → `estimateCaloriesFromText` returns `{food, calories, description}` → "✓ Use" logs it
+3. **Photo** — 📷 → image downscaled to 1024px (`_resizeImage`) → `estimateCaloriesFromPhoto` returns `[{food, calories, description}]` → confirm modal → "Add Selected"
 
-AI Setup modal → model auto-discovery, key stored in localStorage.
+Gemini calls use JSON mode (`callGemini(..., { json: true })`), `maxOutputTokens: 2048`, and ignore `thought` parts. The model is auto-selected (newest non-thinking `flash`) and re-resolved after quota errors.
+
+Daily average pill on Progress honours `avgRangeConfig` (month / last N days / custom range).
 
 ---
 
 ## Progress Tab
 
-- **Hero 1 — Today**: applicable habit completion % for viewDay (denominator = scheduled habits only)
-- **Hero 2 — Success Rate**: successDays / visibleDays (% of days marked successful)
-- **Pills**: Streak, Successful days, Failed days, kcal today, daily avg
-- **Streak logic**: if today is unmarked → count from yesterday backwards; if today = fail → 0; if today = success → include today
-- **Day breakdown bar**: stacked success/fail/unmarked
-- **Heatmap**: monthly grid, amber dot for days with calories logged
-- **Habit Streaks section**: per-habit consecutive applicable-days-done, sorted by streak desc
-
----
+- Heroes: Today (scheduled habits done %) and Success Rate (success days / days elapsed)
+- Pills: Streak (+ best), Successful, Failed, kcal today, daily avg
+- 7-day slip history panel (`renderSlipHistory`), day breakdown bar, heatmap (tap → day modal), per-habit streak bars
 
 ## Grid View
 
-- Eyebrow shows `"June 29, 2026"` full date (updates with day nav)
-- Verdict bar (`id="verdictBar"`) — separate from habit table, shows success/fail/clear buttons
-- Day note banner (`id="dayNoteBanner"`) — above table in single-day view
-- Marked habits (tick/cross/dash) sink to bottom below `row-done-divider`
-- No categories — habits are ordered by drag-and-drop only
-- Future days allowed for notes (labeled "Plan — Jun X")
-
----
+- Status banner (`renderStatusBanner`): `state-fire` / `state-slipping` / `state-broken` / `state-neutral`
+- Verdict bar (success/fail per day), day note banner, habit table
+- Marked habits sink below a divider, ordered by `markOrder`
+- Month progress bar (`monthFill`, `dayProgress`) is updated in `renderStats()`
 
 ## Notes View
 
-- Month note textarea (`id="monthNoteInput"`) — auto-saves with 800ms debounce
-- Day journal: all days newest-first, cards for days with notes, empty rows with "+ Add note"
-
----
+- Month note textarea (`monthNoteInput`) → `state.globalNote`, auto-saves after 800 ms
+- Day journal: all days newest-first; future days labelled "plan"
 
 ## Floating Chat Widget
 
-- `id="chatWidget"` — fixed bottom-right
-- FAB `id="chatFab"` — toggles `id="chatPanel"`
-- `toggleChat()` — open/close; `clearChat()` — wipes history
-- Context-aware: sends calorie data as system context to Gemini
-- Chatbot is Indian food aware; handles restaurant chains, place+dish combos
+- `toggleChat()`, `sendChat()`, `sendQuickChat()`, `clearChat()`
+- Multi-turn: last 20 completed turns (`_chatHistory`) are sent; today's calorie context goes in `systemInstruction`
 
 ---
 
 ## Mobile UX
 
-- Mobile-first design, `max-width: 640px` breakpoint
-- Sidebar is overlay drawer on mobile; swipe right from left edge (<32px) opens, swipe left closes
-- Backdrop `id="mobileBackdrop"` closes sidebar on tap
-- Pointer Events API for habit drag-to-reorder (touch + mouse)
-- All nav items auto-close sidebar on selection
-
----
+- `max-width: 640px` breakpoint; auto single-day view on small screens
+- Sidebar is an overlay drawer; swipe right from the left edge opens, swipe left closes
+- Pointer Events drag-to-reorder for habits
 
 ## CSS Theme
 
-Dark. Tokens: `--bg:#0c0c0e`, `--surface:#141416`, `--green:#3ddc84`, `--amber:#f5a623`, `--red:#ff5f57`, `--blue:#4d9eff`, `--purple:#9b6dff`
-
-Key classes: `.dow-btn`/`.dow-btn.active` (schedule toggles), `.habit-sched` (purple schedule badge), `.td-inactive` (dimmed striped cell for non-scheduled day column), `.form-row`/`.form-half` (side-by-side form fields)
+Dark (default) and light via `html[data-theme]`, toggled by `toggleTheme()`. Dark tokens include `--bg:#020612`, `--surface:#081827`, `--green:#00ffd1`, `--amber:#ffd36b`; `--sans:'Sora','Inter',sans-serif`; `--tab-bar-h:64px`.
 
 ---
 
-## All Functions Exposed to `window`
+## Inline handlers
 
-All public functions are exported via `Object.assign(window, {...})` at the bottom of `app.js`. Includes `toggleDowBtn` (needed for inline onclick on day-of-week buttons).
-
----
+HTML uses inline `onclick="fn()"`; those functions are listed in `Object.assign(window, {...})` at the bottom of `app.js` — add new ones there.
 
 ---
 
-## Anti-Slip System (added 2026-07-02)
-
-### Status Banner (`#statusBanner` in Grid view)
-Always-visible banner above the habit table. States:
-- `state-fire` — ≥3-day streak, green glow animation
-- `state-slipping` — habits pending + ≥2 fails this week, amber pulse
-- `state-broken` — today or yesterday marked fail, red flash
-- `state-neutral` — default / other month
-
-Functions: `renderStatusBanner()` called in `render()`, `renderStats()`, `toggleCheck()`, `_doCycleDay()`, `_applyVerdict()`
-
-### 7-Day Slip History (`#slipHistoryPanel` in Progress view)
-Dynamically inserted after `.progress-heroes`. Shows last 7 day chips + a plain-English accountability message.
-
-Functions: `computeSlipState()` → `renderSlipHistory()` called in `showView('progress')` and `renderProgressView()`
-
-### Streak Protection Modal (`#streakConfirmModal`)
-Intercepts `cycleDay()` and `setDayVerdict()` when marking today as failed with an active streak.
-Shows streak count prominently, requires explicit confirmation.
-
-Functions: `_computeCurrentStreak()`, `_pendingCycleDayArgs`, `_executeCycleDay()`, `_doCycleDay()`, `_applyVerdict()`
-
-### Bottom Tab Bar (`#bottomTabBar`)
-Mobile-only (≤640px), fixed at bottom. Mirrors sidebar nav.
-Tab IDs: `tab-grid`, `tab-progress`, `tab-calories`, `tab-notes`, `tab-habits`
-Synced in `showView()` alongside `.nav-item` active states.
-
----
-
-## CSS Theme (updated)
-
-Dark with indigo tint. New tokens:
-- `--bg:#07070f`, `--surface:#0d0d18`, `--green:#00e87a`, `--amber:#ffba2e`, `--red:#ff3d5a`, `--purple:#7c5cfc`
-- `--sans:'Sora','Inter',sans-serif` (Sora added for headings)
-- `--tab-bar-h:64px` (bottom nav height)
-
-Key new classes: `.status-banner`, `.state-fire/.state-slipping/.state-broken/.state-neutral`,
-`.slip-history`, `.slip-chip`, `.slip-warning`, `.streak-confirm-*`, `.bottom-tab-bar`, `.tab-btn`
-
----
-
-_Last updated: 2026-07-02_
+_Last updated: 2026-10-10_

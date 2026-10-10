@@ -10,8 +10,8 @@ let unsubscribe = null;
 
 // Live state from Firestore
 let state = {
-  habits: [], // [{id, name, cat, order}]
-  checks: {}, // {day: {habitId: bool}}
+  habits: [], // [{id, name, order, days, startDate, endDate}]
+  checks: {}, // {day: {habitId: 'tick'|'cross'|'dash'}}
   successDays: {}, // {day: 'success'|'fail'}
   notes: {}, // {day: string}
   calories: {}, // {day: [{id, food, cal, time}]}
@@ -19,8 +19,7 @@ let state = {
   markOrder: {}, // {day: [habitId, ...]} — order habits were first marked
 };
 
-// Single month-level note (stored in month doc under `monthNote`)
-// Global guideline note (shared across months)
+// Month note shown in the Notes view; stored in tracker/global, shared across months
 state.globalNote = "";
 
 // Current actual date — refreshed by syncToday() so the app rolls over at midnight
@@ -190,9 +189,9 @@ async function initFirebase(config, { verify = false } = {}) {
       scheduleRender();
     } else if (!snap.metadata.fromCache) {
       // First run against an empty database: seed default habits
-      state.habits = DEFAULT_HABITS.map((h, i) => ({
-        ...h,
+      state.habits = DEFAULT_HABITS.map((name, i) => ({
         id: uid(),
+        name,
         order: i,
       }));
       saveHabits();
@@ -280,29 +279,29 @@ async function loadStreakCarry(y, m) {
 // ── DEFAULT HABITS ────────────────────────────────────────────────────────────
 
 const DEFAULT_HABITS = [
-  { name: "Wake up", cat: "Morning" },
-  { name: "Freshen up", cat: "Morning" },
-  { name: "Black coffee", cat: "Morning" },
-  { name: "Chyawanprash", cat: "Morning" },
-  { name: "Handgripper", cat: "Morning" },
-  { name: "Hair repair serum", cat: "Morning" },
-  { name: "Hair oil", cat: "Morning" },
-  { name: "Shower", cat: "Morning" },
-  { name: "Facecare", cat: "Morning" },
-  { name: "Minoxidil", cat: "Morning" },
-  { name: "Pooja", cat: "Morning" },
-  { name: "Breakfast", cat: "Morning" },
-  { name: "Fat burner (AM)", cat: "Health" },
-  { name: "Office", cat: "Work" },
-  { name: "Lunch", cat: "Health" },
-  { name: "Fat burner (PM)", cat: "Health" },
-  { name: "Gym/Walk", cat: "Health" },
-  { name: "Shower (Shampoo)", cat: "Evening" },
-  { name: "Multivitamin", cat: "Evening" },
-  { name: "Dinner", cat: "Evening" },
-  { name: "Fat burner (Night)", cat: "Evening" },
-  { name: "Facecare (PM)", cat: "Evening" },
-  { name: "Minoxidil (PM)", cat: "Evening" },
+  "Wake up",
+  "Freshen up",
+  "Black coffee",
+  "Chyawanprash",
+  "Handgripper",
+  "Hair repair serum",
+  "Hair oil",
+  "Shower",
+  "Facecare",
+  "Minoxidil",
+  "Pooja",
+  "Breakfast",
+  "Fat burner (AM)",
+  "Office",
+  "Lunch",
+  "Fat burner (PM)",
+  "Gym/Walk",
+  "Shower (Shampoo)",
+  "Multivitamin",
+  "Dinner",
+  "Fat burner (Night)",
+  "Facecare (PM)",
+  "Minoxidil (PM)",
 ];
 
 // ── SAVE TO FIRESTORE ─────────────────────────────────────────────────────────
@@ -438,7 +437,15 @@ async function fetchWithTimeout(input, init = {}, timeout = 120000) {
   }
 }
 
-async function callGemini(textPrompt, imageBase64 = null, mimeType = null) {
+// options.json: ask for a JSON response (JSON mode)
+// options.system: system instruction text
+// options.history: earlier turns [{role: "user"|"ai", text}] for multi-turn chat
+async function callGemini(
+  textPrompt,
+  imageBase64 = null,
+  mimeType = null,
+  { json = false, system = null, history = [] } = {}
+) {
   const key = localStorage.getItem(GEMINI_KEY_KEY);
   if (!key) throw new Error("No Gemini API key configured.");
 
@@ -459,8 +466,21 @@ async function callGemini(textPrompt, imageBase64 = null, mimeType = null) {
       // Key goes in a header rather than the URL so it stays out of logs/history
       headers: { "Content-Type": "application/json", "x-goog-api-key": key },
       body: JSON.stringify({
-        contents: [{ parts }],
-        generationConfig: { temperature: 0.2, maxOutputTokens: 600 },
+        ...(system && { systemInstruction: { parts: [{ text: system }] } }),
+        contents: [
+          ...history.map((m) => ({
+            role: m.role === "ai" ? "model" : "user",
+            parts: [{ text: m.text }],
+          })),
+          { role: "user", parts },
+        ],
+        generationConfig: {
+          temperature: 0.2,
+          // Roomy enough for multi-item photo results; newer flash models also
+          // spend part of this budget on internal reasoning
+          maxOutputTokens: 2048,
+          ...(json && { responseMimeType: "application/json" }),
+        },
       }),
     },
     120000
@@ -479,7 +499,11 @@ async function callGemini(textPrompt, imageBase64 = null, mimeType = null) {
     throw new Error(msg);
   }
   const data = await resp.json();
-  return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+  // Skip "thought" parts that reasoning models may return before the answer
+  return (data.candidates?.[0]?.content?.parts || [])
+    .filter((p) => !p.thought)
+    .map((p) => p.text || "")
+    .join("");
 }
 
 function parseGeminiJSON(text) {
@@ -506,7 +530,7 @@ Return ONLY valid JSON, no markdown, no extra text:
 {"food": "clean food name e.g. Dal Chawal", "calories": 250, "description": "serving size detail e.g. 1 katori dal + 1 cup rice"}
 
 Food: "${food}"`;
-  const raw = await callGemini(prompt);
+  const raw = await callGemini(prompt, null, null, { json: true });
   return parseGeminiJSON(raw);
 }
 
@@ -517,7 +541,7 @@ Use typical Indian household portions. Be specific about serving size in the des
 Return ONLY a valid JSON array, no markdown, no extra text:
 [{"food": "Rice", "calories": 250, "description": "~1 cup cooked basmati rice"}, ...]
 If no food is identifiable in the image, return: []`;
-  const raw = await callGemini(prompt, base64, mimeType);
+  const raw = await callGemini(prompt, base64, mimeType, { json: true });
   return parseGeminiJSON(raw);
 }
 
@@ -937,7 +961,8 @@ async function updateCalorieGoal(val) {
 
 // ── AI CHATBOT ────────────────────────────────────────────────────────────────
 
-let _chatHistory = [];
+let _chatHistory = []; // completed turns [{role: "user"|"ai", text}] sent as context
+const CHAT_HISTORY_LIMIT = 20;
 
 function _buildCalorieContext() {
   const entries = state.calories[viewDay] || [];
@@ -958,7 +983,6 @@ function _buildCalorieContext() {
 }
 
 function _appendChatMessage(role, text) {
-  _chatHistory.push({ role, text });
   const log = document.getElementById("chatLog");
   if (!log) return;
   const div = document.createElement("div");
@@ -1011,17 +1035,23 @@ async function sendChat() {
   if (tips) tips.classList.add("hidden");
 
   try {
-    const ctx = _buildCalorieContext();
-    const prompt = `You are a friendly, practical health and nutrition assistant inside a personal habit tracker app. Keep replies concise (2-4 sentences). Be non-judgmental and supportive. The user eats Indian and global foods.\n\nContext: ${ctx}\n\nQuestion: ${question}`;
-    const reply = await callGemini(prompt);
+    const system = `You are a friendly, practical health and nutrition assistant inside a personal habit tracker app. Keep replies concise (2-4 sentences). Be non-judgmental and supportive. The user eats Indian and global foods.\n\nContext: ${_buildCalorieContext()}`;
+    const reply = (
+      await callGemini(question, null, null, {
+        system,
+        history: _chatHistory,
+      })
+    ).trim();
     _setChatThinking(false);
-    _appendChatMessage("ai", reply.trim());
+    _appendChatMessage("ai", reply);
+    _chatHistory.push(
+      { role: "user", text: question },
+      { role: "ai", text: reply }
+    );
+    _chatHistory = _chatHistory.slice(-CHAT_HISTORY_LIMIT);
   } catch (e) {
     _setChatThinking(false);
-    _appendChatMessage(
-      "ai",
-      "\u26a0 Could not reach AI \u2014 check your Gemini key in AI Setup."
-    );
+    _appendChatMessage("ai", `\u26a0 ${e.message || "Could not reach AI"}`);
     console.warn("Chat error:", e);
   }
 }
@@ -1083,10 +1113,10 @@ let _renderQueued = false;
 function scheduleRender() {
   if (_renderQueued) return;
   _renderQueued = true;
-  requestAnimationFrame(() => {
+  setTimeout(() => {
     _renderQueued = false;
     render();
-  });
+  }, 16);
 }
 
 function renderLabels() {
@@ -1243,7 +1273,6 @@ function renderGridBody() {
   const days = singleDayView
     ? [viewDay]
     : Array.from({ length: dim }, (_, i) => i + 1);
-  const visibleDays = isCurrentMonth() ? CURRENT_DAY : dim;
 
   // Split: habits marked (tick/cross/dash) for viewDay sink to bottom
   const viewDayMap = state.checks[viewDay] || {};
@@ -1408,48 +1437,35 @@ function toggleCheck(day, habitId, btn) {
 function cycleDay(day, btn) {
   if (isFuture(day)) return;
   const cur = state.successDays[day];
-  // If cycling to "fail" and there's an active streak, require confirmation
-  if (!cur && _computeCurrentStreak() > 0) {
-    // Going from unmarked -> success first click: no issue
-    // Actually cycle goes: none->success->fail->none
-    // So first click = success, never hits fail on first click
-  }
+  // cycle: unmarked -> success -> fail -> unmarked
   const next = !cur ? "success" : cur === "success" ? "fail" : undefined;
-
-  // Streak protection: intercept when trying to mark fail on today with a streak
   if (next === "fail" && isToday(day)) {
-    const streak = _computeCurrentStreak();
-    if (streak > 0) {
-      // Show confirmation modal instead of immediately cycling
-      _pendingCycleDayArgs = { day, btn, next };
-      const numEl = document.getElementById("streakConfirmNum");
-      const unitEl = document.getElementById("streakConfirmUnit");
-      const msgEl = document.getElementById("streakConfirmMsg");
-      const confirmBtn = document.getElementById("streakConfirmBtn");
-      if (numEl) numEl.textContent = streak;
-      if (unitEl) unitEl.textContent = `day${streak !== 1 ? "s" : ""} at stake`;
-      if (msgEl)
-        msgEl.textContent = `You have a ${streak}-day streak. Marking today as failed will reset it to zero. Are you absolutely sure?`;
-      if (confirmBtn)
-        confirmBtn.onclick = () => {
-          closeModal("streakConfirmModal");
-          _executeCycleDay();
-        };
-      openModal("streakConfirmModal");
-      return;
-    }
+    confirmStreakBreak(() => _doCycleDay(day, btn, next));
+  } else {
+    _doCycleDay(day, btn, next);
   }
-
-  _doCycleDay(day, btn, next);
 }
 
-let _pendingCycleDayArgs = null;
-
-function _executeCycleDay() {
-  if (!_pendingCycleDayArgs) return;
-  const { day, btn, next } = _pendingCycleDayArgs;
-  _pendingCycleDayArgs = null;
-  _doCycleDay(day, btn, next);
+// Marking today as failed while a streak is running asks for confirmation
+// first; otherwise runs onConfirm straight away.
+function confirmStreakBreak(onConfirm) {
+  const streak = _computeCurrentStreak();
+  if (streak <= 0) {
+    onConfirm();
+    return;
+  }
+  document.getElementById("streakConfirmNum").textContent = streak;
+  document.getElementById("streakConfirmUnit").textContent = `day${
+    streak !== 1 ? "s" : ""
+  } at stake`;
+  document.getElementById(
+    "streakConfirmMsg"
+  ).textContent = `You have a ${streak}-day streak. Marking today as failed will reset it to zero. Are you absolutely sure?`;
+  document.getElementById("streakConfirmBtn").onclick = () => {
+    closeModal("streakConfirmModal");
+    onConfirm();
+  };
+  openModal("streakConfirmModal");
 }
 
 function _doCycleDay(day, btn, next) {
@@ -1473,11 +1489,7 @@ function _doCycleDay(day, btn, next) {
 // ── NOTES ─────────────────────────────────────────────────────────────────────
 
 let activeNoteDay = null;
-let activeMonthHabit = null;
-let activeMonthNote = false;
 function openNote(day) {
-  activeMonthNote = false;
-  activeMonthHabit = null;
   activeNoteDay = day;
   const label = isFuture(day)
     ? `Plan — ${MONTH_NAMES[viewMonth]} ${day}`
@@ -1488,38 +1500,15 @@ function openNote(day) {
   setTimeout(() => document.getElementById("noteText").focus(), 60);
 }
 
-function openMonthNote() {
-  activeNoteDay = null;
-  activeMonthHabit = null;
-  activeMonthNote = true;
-  document.getElementById(
-    "noteModalTitle"
-  ).textContent = `Month Notes — ${MONTH_NAMES[viewMonth]} ${viewYear}`;
-  document.getElementById("noteText").value = state.globalNote || "";
-  openModal("noteModal");
-  setTimeout(() => document.getElementById("noteText").focus(), 60);
-}
-
 function saveNote() {
   const v = document.getElementById("noteText").value.trim();
-  if (activeMonthNote) {
-    state.globalNote = v || "";
-    activeMonthNote = false;
-    // persist global note immediately
-    saveGlobalNote().catch((e) => console.warn("saveGlobalNote failed", e));
-  } else if (activeMonthHabit) {
-    // legacy: no-op (per-habit month notes removed)
-  } else {
-    if (!activeNoteDay) return;
-    if (v) state.notes[activeNoteDay] = v;
-    else delete state.notes[activeNoteDay];
-    saveMonthFields({ [`notes.${activeNoteDay}`]: v || undefined });
-  }
+  if (!activeNoteDay) return;
+  if (v) state.notes[activeNoteDay] = v;
+  else delete state.notes[activeNoteDay];
+  saveMonthFields({ [`notes.${activeNoteDay}`]: v || undefined });
   closeModal("noteModal");
   renderView(currentView);
 }
-
-// removed per-habit month note function — now using a single month note
 
 // ── NOTES VIEW ───────────────────────────────────────────────────────────────
 
@@ -1530,7 +1519,7 @@ function onMonthNoteInput() {
   state.globalNote = val;
   clearTimeout(_monthNoteTimer);
   _monthNoteTimer = setTimeout(() => {
-    saveGlobalNote().catch((e) => console.warn("auto-save month note:", e));
+    saveGlobalNote();
   }, 800);
 }
 
@@ -1766,11 +1755,6 @@ function _dragCleanup() {
   _dragFromIdx = -1;
 }
 
-// Keep old names in window for backward compat — no longer used by HTML
-function dragStart() {}
-function dragOver() {}
-function drop() {}
-
 // ── RENDER HABITS LIST ────────────────────────────────────────────────────────
 
 function renderHabitsList() {
@@ -1812,7 +1796,6 @@ function renderHabitsList() {
 
 function renderStats() {
   const habits = state.habits;
-  const n = habits.length;
 
   // Viewed day (shows counts for the currently selected day)
   const todayApplicableStats = habits.filter((h) =>
@@ -2141,31 +2124,13 @@ function openDayModal(day) {
 
 function setDayVerdict(day, verdict) {
   const cur = state.successDays[day];
-
-  // Streak protection when setting fail via day modal
   if (verdict === "fail" && cur !== "fail" && isToday(day)) {
-    const streak = _computeCurrentStreak();
-    if (streak > 0) {
-      const confirmBtn = document.getElementById("streakConfirmBtn");
-      const numEl = document.getElementById("streakConfirmNum");
-      const unitEl = document.getElementById("streakConfirmUnit");
-      const msgEl = document.getElementById("streakConfirmMsg");
-      if (numEl) numEl.textContent = streak;
-      if (unitEl) unitEl.textContent = `day${streak !== 1 ? "s" : ""} at stake`;
-      if (msgEl)
-        msgEl.textContent = `You have a ${streak}-day streak. Marking today as failed will reset it to zero. Are you absolutely sure?`;
-      if (confirmBtn)
-        confirmBtn.onclick = () => {
-          closeModal("streakConfirmModal");
-          _applyVerdict(day, verdict);
-        };
-      // Close day modal first so confirm sits on top
-      closeModal("dayModal");
-      openModal("streakConfirmModal");
-      return;
-    }
+    // Close day modal first so the confirmation sits on top
+    closeModal("dayModal");
+    confirmStreakBreak(() => _applyVerdict(day, verdict));
+  } else {
+    _applyVerdict(day, verdict);
   }
-  _applyVerdict(day, verdict);
 }
 
 function _applyVerdict(day, verdict) {
@@ -2783,15 +2748,11 @@ Object.assign(window, {
   cycleDay,
   openNote,
   saveNote,
-  openMonthNote,
   onMonthNoteInput,
   openAddHabit,
   openEditHabit,
   saveHabit,
   deleteHabit,
-  dragStart,
-  dragOver,
-  drop,
   openDayModal,
   setDayVerdict,
   openModal,
@@ -2827,10 +2788,6 @@ Object.assign(window, {
   openAvgRangeModal,
   toggleAvgRangeFields,
   saveAvgRangeSettings,
-  // anti-slip
-  renderStatusBanner,
-  renderSlipHistory,
-  _executeCycleDay,
 });
 
 // ── START ─────────────────────────────────────────────────────────────────────
