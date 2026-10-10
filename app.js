@@ -1,7 +1,9 @@
 // ── FIREBASE DYNAMIC IMPORT ────────────────────────────────────────────────────
 
 const FB_CONFIG_KEY = "tracker_fb_config";
+const FB_VERSION = "10.12.0";
 
+let fs = null; // firebase-firestore module, loaded once in initFirebase()
 let db = null;
 let MONTH_DOC_ID = "";
 let unsubscribe = null;
@@ -21,11 +23,19 @@ let state = {
 // Global guideline note (shared across months)
 state.globalNote = "";
 
-// Current actual date (constants)
-const NOW = new Date();
-const CURRENT_YEAR = NOW.getFullYear();
-const CURRENT_MONTH = NOW.getMonth();
-const CURRENT_DAY = NOW.getDate();
+// Current actual date — refreshed by syncToday() so the app rolls over at midnight
+let CURRENT_YEAR, CURRENT_MONTH, CURRENT_DAY;
+function readToday() {
+  const now = new Date();
+  CURRENT_YEAR = now.getFullYear();
+  CURRENT_MONTH = now.getMonth();
+  CURRENT_DAY = now.getDate();
+}
+readToday();
+
+// Consecutive successful days ending on the last day of the month before the
+// viewed one, so streaks carry across month boundaries. See loadStreakCarry().
+let streakCarry = 0;
 
 // View state (what the user is looking at). Defaults to today.
 let viewYear = CURRENT_YEAR;
@@ -49,12 +59,17 @@ try {
   console.warn("Failed to load tracker_avg_range_config:", e);
 }
 
-const TODAY = NOW;
-const YEAR = CURRENT_YEAR;
-const MONTH = CURRENT_MONTH;
-const TODAY_DAY = CURRENT_DAY;
 function DAYS_IN_VIEW() {
   return new Date(viewYear, viewMonth + 1, 0).getDate();
+}
+function isCurrentMonth() {
+  return viewYear === CURRENT_YEAR && viewMonth === CURRENT_MONTH;
+}
+function isToday(day) {
+  return isCurrentMonth() && day === CURRENT_DAY;
+}
+function monthDocId(y, m) {
+  return `${y}-${String(m + 1).padStart(2, "0")}`;
 }
 function isFuture(day) {
   if (viewYear > CURRENT_YEAR) return true;
@@ -128,7 +143,7 @@ async function connectFirebase() {
   }
 
   try {
-    await initFirebase(config);
+    await initFirebase(config, { verify: true });
     localStorage.setItem(FB_CONFIG_KEY, JSON.stringify(config));
   } catch (e) {
     showError(errEl, "Could not connect: " + e.message);
@@ -140,23 +155,19 @@ function showError(el, msg) {
   el.classList.remove("hidden");
 }
 
-async function initFirebase(config) {
-  // Dynamically import Firebase
+async function initFirebase(config, { verify = false } = {}) {
   const { initializeApp } = await import(
-    "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js"
+    `https://www.gstatic.com/firebasejs/${FB_VERSION}/firebase-app.js`
   );
-  const { getFirestore, doc, onSnapshot, setDoc, getDoc } = await import(
-    "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js"
+  fs = await import(
+    `https://www.gstatic.com/firebasejs/${FB_VERSION}/firebase-firestore.js`
   );
 
   const app = initializeApp(config, config.projectId); // unique name prevents re-init error
-  db = getFirestore(app);
+  db = fs.getFirestore(app);
   // Enable IndexedDB offline persistence where supported
   try {
-    const { enableIndexedDbPersistence } = await import(
-      "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js"
-    );
-    await enableIndexedDbPersistence(db);
+    await fs.enableIndexedDbPersistence(db);
     console.log("Firestore IndexedDB persistence enabled");
   } catch (err) {
     // Common cases: multiple tabs (failed-precondition) or unsupported browser (unimplemented)
@@ -165,6 +176,11 @@ async function initFirebase(config) {
       err.code || err.message || err
     );
   }
+
+  const habitsRef = fs.doc(db, "tracker", "habits");
+  // A newly pasted config is checked with a real read so a bad one surfaces in the setup screen
+  if (verify) await fs.getDocFromServer(habitsRef);
+
   // Show app, hide setup
   document.getElementById("setupScreen").classList.add("hidden");
   document.getElementById("app").classList.remove("hidden");
@@ -173,44 +189,24 @@ async function initFirebase(config) {
   // Subscribe to the currently viewed month (defaults to current month)
   subscribeToMonth(viewYear, viewMonth);
 
-  // Load habits from separate doc (persist across months)
-  const habitsRef = doc(db, "tracker", "habits");
-  const habitsSnap = await getDoc(habitsRef);
-  if (habitsSnap.exists()) {
-    state.habits = habitsSnap.data().list || [];
-  } else {
-    // First-time: seed default habits
-    state.habits = DEFAULT_HABITS.map((h, i) => ({
-      ...h,
-      id: uid(),
-      order: i,
-    }));
-    await setDoc(habitsRef, { list: state.habits });
-  }
-
-  // Real-time habits listener
-  onSnapshot(habitsRef, (snap) => {
+  // Habits live in their own doc (persist across months)
+  fs.onSnapshot(habitsRef, (snap) => {
     if (snap.exists()) {
       state.habits = (snap.data().list || []).sort((a, b) => a.order - b.order);
       render();
+    } else if (!snap.metadata.fromCache) {
+      // First run against an empty database: seed default habits
+      state.habits = DEFAULT_HABITS.map((h, i) => ({
+        ...h,
+        id: uid(),
+        order: i,
+      }));
+      saveHabits();
     }
   });
 
-  // Global guideline note (stored in tracker/global)
-  const {
-    onSnapshot: onSnap2,
-    doc: doc2,
-    getDoc: getDoc2,
-  } = await import(
-    "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js"
-  );
-  const globalRef = doc(db, "tracker", "global");
-  const globalSnap = await getDoc2(globalRef);
-  if (globalSnap.exists()) {
-    state.globalNote = globalSnap.data().monthNote || "";
-    state.calorieGoal = globalSnap.data().calorieGoal || 2000;
-  }
-  onSnap2(globalRef, (snap) => {
+  // Global note + calorie goal (stored in tracker/global)
+  fs.onSnapshot(fs.doc(db, "tracker", "global"), (snap) => {
     if (snap.exists()) {
       state.globalNote = snap.data().monthNote || "";
       state.calorieGoal = snap.data().calorieGoal || 2000;
@@ -222,39 +218,69 @@ async function initFirebase(config) {
 }
 
 // Subscribe to a month document and listen in real-time
-async function subscribeToMonth(y, m) {
+function subscribeToMonth(y, m) {
   if (!db) return;
   if (unsubscribe) unsubscribe();
-  MONTH_DOC_ID = `${y}-${String(m + 1).padStart(2, "0")}`;
-  const { doc, onSnapshot } = await import(
-    "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js"
-  );
-  const monthRef = doc(db, "tracker", MONTH_DOC_ID);
-  unsubscribe = onSnapshot(
-    monthRef,
+  MONTH_DOC_ID = monthDocId(y, m);
+  // Drop the previous month's data right away so nothing stale is shown or edited
+  applyMonthData({});
+  streakCarry = 0;
+  loadStreakCarry(y, m);
+  unsubscribe = fs.onSnapshot(
+    fs.doc(db, "tracker", MONTH_DOC_ID),
     (snap) => {
-      if (snap.exists()) {
-        const data = snap.data();
-        state.checks = data.checks || {};
-        state.successDays = data.successDays || {};
-        state.notes = data.notes || {};
-        state.calories = data.calories || {};
-        state.markOrder = data.markOrder || {};
-      } else {
-        state.checks = {};
-        state.successDays = {};
-        state.notes = {};
-        state.calories = {};
-        state.markOrder = {};
-      }
+      applyMonthData(snap.exists() ? snap.data() : {});
       render();
-      setSyncStatus("synced");
+      if (!_pendingWrites && !Object.keys(_queuedFields).length)
+        setSyncStatus("synced");
     },
     (err) => {
       console.error(err);
       setSyncStatus("offline");
     }
   );
+}
+
+function applyMonthData(data) {
+  state.checks = data.checks || {};
+  state.successDays = data.successDays || {};
+  state.notes = data.notes || {};
+  state.calories = data.calories || {};
+  state.markOrder = data.markOrder || {};
+  // Keep local edits that haven't been flushed yet on top of incoming data
+  for (const [path, value] of Object.entries(
+    _queuedFields[MONTH_DOC_ID] || {}
+  )) {
+    setPath(state, path, value);
+  }
+}
+
+// Walks back through earlier months to find how many successful days in a row
+// led up to the start of month (y, m). Usually reads a single (cached) doc.
+async function loadStreakCarry(y, m) {
+  const forDoc = monthDocId(y, m);
+  let carry = 0;
+  try {
+    for (let i = 0; i < 24; i++) {
+      m -= 1;
+      if (m < 0) {
+        m = 11;
+        y -= 1;
+      }
+      const snap = await fs.getDoc(fs.doc(db, "tracker", monthDocId(y, m)));
+      const days = (snap.exists() && snap.data().successDays) || {};
+      const dim = new Date(y, m + 1, 0).getDate();
+      let run = 0;
+      while (run < dim && days[dim - run] === "success") run++;
+      carry += run;
+      if (run < dim) break;
+    }
+  } catch (err) {
+    console.warn("Could not load previous month for streak:", err);
+  }
+  if (MONTH_DOC_ID !== forDoc || carry === streakCarry) return;
+  streakCarry = carry;
+  render();
 }
 
 // ── DEFAULT HABITS ────────────────────────────────────────────────────────────
@@ -287,49 +313,76 @@ const DEFAULT_HABITS = [
 
 // ── SAVE TO FIRESTORE ─────────────────────────────────────────────────────────
 
-let saveTimer = null;
-function scheduleSave() {
+// Queues writes to only the given fields of the viewed month's doc. Keys are
+// dotted field paths ("checks.5.<habitId>"); an undefined value deletes the
+// field. Edits are keyed by the doc being viewed when they were made, so
+// switching months before the batch flushes can't write them to the wrong doc.
+let _queuedFields = {}; // {docId: {path: value}}
+let _flushTimer = null;
+function saveMonthFields(fields) {
+  if (!db) return;
+  Object.assign((_queuedFields[MONTH_DOC_ID] ||= {}), fields);
   setSyncStatus("saving");
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(flushSave, 600);
+  clearTimeout(_flushTimer);
+  _flushTimer = setTimeout(flushMonthFields, 600);
 }
 
-async function flushSave() {
-  if (!db) return;
-  const { doc, setDoc } = await import(
-    "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js"
-  );
-  const monthRef = doc(db, "tracker", MONTH_DOC_ID);
-  await setDoc(monthRef, {
-    checks: state.checks,
-    successDays: state.successDays,
-    notes: state.notes,
-    calories: state.calories,
-    markOrder: state.markOrder,
-    year: viewYear,
-    month: viewMonth + 1,
-    updatedAt: Date.now(),
-  });
+function flushMonthFields() {
+  clearTimeout(_flushTimer);
+  const queued = _queuedFields;
+  _queuedFields = {};
+  for (const [docId, fields] of Object.entries(queued)) {
+    const [y, m] = docId.split("-").map(Number);
+    const patch = { year: y, month: m, updatedAt: Date.now() };
+    for (const [path, value] of Object.entries(fields)) {
+      setPath(patch, path, value === undefined ? fs.deleteField() : value);
+    }
+    trackWrite(fs.setDoc(fs.doc(db, "tracker", docId), patch, { merge: true }));
+  }
 }
 
-async function saveGlobalNote() {
-  if (!db) return;
-  const { doc, setDoc } = await import(
-    "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js"
-  );
-  const gRef = doc(db, "tracker", "global");
-  await setDoc(gRef, {
-    monthNote: state.globalNote,
-    calorieGoal: state.calorieGoal,
-  });
+function setPath(obj, path, value) {
+  const keys = path.split(".");
+  const last = keys.pop();
+  for (const k of keys) obj = obj[k] ??= {};
+  if (value === undefined) delete obj[last];
+  else obj[last] = value;
 }
 
-async function saveHabits() {
-  if (!db) return;
-  const { doc, setDoc } = await import(
-    "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js"
+let _pendingWrites = 0;
+function trackWrite(promise) {
+  _pendingWrites++;
+  setSyncStatus("saving");
+  promise.then(
+    () => {
+      if (--_pendingWrites === 0) setSyncStatus("synced");
+    },
+    (err) => {
+      _pendingWrites--;
+      console.error("Save failed:", err);
+      setSyncStatus("error");
+    }
   );
-  await setDoc(doc(db, "tracker", "habits"), { list: state.habits });
+  return promise;
+}
+
+// Not awaited by callers: the local cache applies the write immediately, and
+// waiting for the server ack would stall the UI while offline.
+function saveGlobalNote() {
+  if (!db) return Promise.resolve();
+  return trackWrite(
+    fs.setDoc(fs.doc(db, "tracker", "global"), {
+      monthNote: state.globalNote,
+      calorieGoal: state.calorieGoal,
+    })
+  );
+}
+
+function saveHabits() {
+  if (!db) return Promise.resolve();
+  return trackWrite(
+    fs.setDoc(fs.doc(db, "tracker", "habits"), { list: state.habits })
+  );
 }
 
 // ── GEMINI AI ─────────────────────────────────────────────────────────────────
@@ -579,12 +632,7 @@ function acceptAISuggestion() {
   const cal = aiSuggestionData.calories;
   if (!food || !cal || cal <= 0) return;
 
-  if (!state.calories[viewDay]) state.calories[viewDay] = [];
-  const now = new Date();
-  const time = `${String(now.getHours()).padStart(2, "0")}:${String(
-    now.getMinutes()
-  ).padStart(2, "0")}`;
-  state.calories[viewDay].push({ id: uid(), food, cal, time });
+  logCalories([{ food, cal }]);
 
   // Clear form fields
   const foodEl = document.getElementById("calFoodInput");
@@ -596,9 +644,6 @@ function acceptAISuggestion() {
   if (amtEl) amtEl.value = "";
   aiSuggestionData = null;
   _hideAISuggestion();
-
-  renderCalorieView();
-  scheduleSave();
 }
 
 function dismissAISuggestion() {
@@ -741,25 +786,9 @@ function addPhotoEntries() {
     return;
   }
 
-  if (!state.calories[viewDay]) state.calories[viewDay] = [];
-  const now = new Date();
-  const time = `${String(now.getHours()).padStart(2, "0")}:${String(
-    now.getMinutes()
-  ).padStart(2, "0")}`;
-
-  toAdd.forEach((entry) => {
-    state.calories[viewDay].push({
-      id: uid(),
-      food: entry.food,
-      cal: entry.calories,
-      time,
-    });
-  });
-
+  logCalories(toAdd.map((e) => ({ food: e.food, cal: e.calories })));
   _pendingPhotoEntries = [];
   closeModal("photoResultModal");
-  renderCalorieView();
-  scheduleSave();
 }
 
 // ── AI SETUP ──────────────────────────────────────────────────────────────────
@@ -892,29 +921,33 @@ function addCalorieEntry() {
   const cal = parseInt(amtEl.value, 10);
   if (!food || !cal || cal <= 0) return;
 
-  if (!state.calories[viewDay]) state.calories[viewDay] = [];
-  const now = new Date();
-  const time = `${String(now.getHours()).padStart(2, "0")}:${String(
-    now.getMinutes()
-  ).padStart(2, "0")}`;
-  state.calories[viewDay].push({ id: uid(), food, cal, time });
+  logCalories([{ food, cal }]);
 
   foodEl.value = "";
   amtEl.value = "";
   aiSuggestionData = null;
   _hideAISuggestion();
   foodEl.focus();
+}
 
+// Appends entries to the viewed day's food log, stamped with the current time
+function logCalories(items) {
+  const now = new Date();
+  const time = `${String(now.getHours()).padStart(2, "0")}:${String(
+    now.getMinutes()
+  ).padStart(2, "0")}`;
+  const list = (state.calories[viewDay] ||= []);
+  items.forEach(({ food, cal }) => list.push({ id: uid(), food, cal, time }));
+  saveMonthFields({ [`calories.${viewDay}`]: list });
   renderCalorieView();
-  scheduleSave();
 }
 
 function deleteCalorieEntry(day, id) {
   if (!state.calories[day]) return;
   state.calories[day] = state.calories[day].filter((e) => e.id !== id);
   if (!state.calories[day].length) delete state.calories[day];
+  saveMonthFields({ [`calories.${day}`]: state.calories[day] });
   renderCalorieView();
-  scheduleSave();
 }
 
 async function updateCalorieGoal(val) {
@@ -922,7 +955,7 @@ async function updateCalorieGoal(val) {
   if (!goal || goal < 100) return;
   state.calorieGoal = goal;
   renderCalorieView();
-  await saveGlobalNote(); // saveGlobalNote now also persists calorieGoal
+  saveGlobalNote(); // also persists calorieGoal
 }
 
 // ── AI CHATBOT ────────────────────────────────────────────────────────────────
@@ -1146,11 +1179,7 @@ function renderGridHead() {
   let html = `<tr>
     <th class="th-task">Habit</th>`;
   days.forEach((d) => {
-    const isToday =
-      viewYear === CURRENT_YEAR &&
-      viewMonth === CURRENT_MONTH &&
-      d === CURRENT_DAY;
-    html += `<th class="${isToday ? "th-today" : ""}">${d}</th>`;
+    html += `<th class="${isToday(d) ? "th-today" : ""}">${d}</th>`;
   });
   html += `</tr>`;
   document.getElementById("hthead").innerHTML = html;
@@ -1222,10 +1251,7 @@ function renderGridBody() {
   const days = singleDayView
     ? [viewDay]
     : Array.from({ length: dim }, (_, i) => i + 1);
-  const visibleDays =
-    viewYear === CURRENT_YEAR && viewMonth === CURRENT_MONTH
-      ? CURRENT_DAY
-      : dim;
+  const visibleDays = isCurrentMonth() ? CURRENT_DAY : dim;
 
   // Split: habits marked (tick/cross/dash) for viewDay sink to bottom
   const viewDayMap = state.checks[viewDay] || {};
@@ -1379,9 +1405,12 @@ function toggleCheck(day, habitId, btn) {
     next === "tick" ? "✓" : next === "cross" ? "✕" : next === "dash" ? "—" : "";
   btn.textContent = icon;
 
+  saveMonthFields({
+    [`checks.${day}.${habitId}`]: next,
+    [`markOrder.${day}`]: state.markOrder[day] || [],
+  });
   renderStats();
   renderStatusBanner();
-  scheduleSave();
 }
 
 function cycleDay(day, btn) {
@@ -1396,11 +1425,7 @@ function cycleDay(day, btn) {
   const next = !cur ? "success" : cur === "success" ? "fail" : undefined;
 
   // Streak protection: intercept when trying to mark fail on today with a streak
-  const isToday =
-    viewYear === CURRENT_YEAR &&
-    viewMonth === CURRENT_MONTH &&
-    day === CURRENT_DAY;
-  if (next === "fail" && isToday) {
+  if (next === "fail" && isToday(day)) {
     const streak = _computeCurrentStreak();
     if (streak > 0) {
       // Show confirmation modal instead of immediately cycling
@@ -1451,7 +1476,7 @@ function _doCycleDay(day, btn, next) {
   renderStats();
   renderStatusBanner();
   renderProgressView();
-  scheduleSave();
+  saveMonthFields({ [`successDays.${day}`]: next });
 }
 
 // ── NOTES ─────────────────────────────────────────────────────────────────────
@@ -1497,12 +1522,12 @@ function saveNote() {
     if (!activeNoteDay) return;
     if (v) state.notes[activeNoteDay] = v;
     else delete state.notes[activeNoteDay];
+    saveMonthFields({ [`notes.${activeNoteDay}`]: v || undefined });
   }
   closeModal("noteModal");
   renderGrid();
   renderProgressView();
   renderNotesView();
-  scheduleSave();
 }
 
 // removed per-habit month note function — now using a single month note
@@ -1534,19 +1559,12 @@ function renderNotesView() {
   if (!journal) return;
 
   const daysIn = DAYS_IN_VIEW();
-  const todayDay =
-    viewYear === CURRENT_YEAR && viewMonth === CURRENT_MONTH
-      ? CURRENT_DAY
-      : daysIn;
+  const todayDay = isCurrentMonth() ? CURRENT_DAY : daysIn;
   const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
   let html = "";
   for (let d = daysIn; d >= 1; d--) {
     const note = state.notes[d];
-    const isToday =
-      viewYear === CURRENT_YEAR &&
-      viewMonth === CURRENT_MONTH &&
-      d === CURRENT_DAY;
     const fut = d > todayDay;
     const dow = DOW[new Date(viewYear, viewMonth, d).getDay()];
     const safe = note
@@ -1558,13 +1576,13 @@ function renderNotesView() {
       : "";
 
     if (note) {
-      html += `<div class="journal-card${isToday ? " today" : ""}">
+      html += `<div class="journal-card${isToday(d) ? " today" : ""}">
         <div class="journal-card-head">
           <div class="journal-date">
             <span class="journal-day-num">${d}</span>
             <span class="journal-dow">${dow}</span>
             ${
-              isToday
+              isToday(d)
                 ? `<span class="journal-chip today-chip">today</span>`
                 : ""
             }
@@ -1575,12 +1593,12 @@ function renderNotesView() {
         <div class="journal-text">${safe}</div>
       </div>`;
     } else {
-      html += `<div class="journal-empty${isToday ? " today" : ""}${
+      html += `<div class="journal-empty${isToday(d) ? " today" : ""}${
         fut ? " future" : ""
       }">
         <span class="journal-day-num dim">${d}</span>
         <span class="journal-dow dim">${dow}</span>
-        ${isToday ? `<span class="journal-chip today-chip">today</span>` : ""}
+        ${isToday(d) ? `<span class="journal-chip today-chip">today</span>` : ""}
         ${fut ? `<span class="journal-chip plan-chip">plan ahead</span>` : ""}
         <button class="journal-add-btn" onclick="openNote(${d})">+ Add note</button>
       </div>`;
@@ -1653,7 +1671,7 @@ async function saveHabit() {
   }
 
   closeModal("habitModal");
-  await saveHabits();
+  saveHabits();
   render();
 }
 
@@ -1667,7 +1685,7 @@ async function deleteHabit(id) {
   state.habits = state.habits.filter((h) => h.id !== id);
   // Renumber
   state.habits.forEach((h, i) => (h.order = i));
-  await saveHabits();
+  saveHabits();
   render();
 }
 
@@ -1752,7 +1770,7 @@ async function _dragPointerUp() {
   const [moved] = state.habits.splice(fromIdx, 1);
   state.habits.splice(toIdx, 0, moved);
   state.habits.forEach((h, i) => (h.order = i));
-  await saveHabits();
+  saveHabits();
   render();
 }
 
@@ -1830,24 +1848,7 @@ function renderStats() {
   ).length;
   document.getElementById("hSucc").textContent = succDays;
 
-  // Streak — based on previous day; if today unmarked, count from yesterday
-  let streak = 0;
-  const _isViewToday =
-    viewYear === CURRENT_YEAR &&
-    viewMonth === CURRENT_MONTH &&
-    viewDay === CURRENT_DAY;
-  const _todayV = state.successDays[viewDay];
-  if (_isViewToday && _todayV === "fail") {
-    streak = 0;
-  } else {
-    const _sStart =
-      _isViewToday && _todayV !== "success" ? viewDay - 1 : viewDay;
-    for (let d = _sStart; d >= 1; d--) {
-      if (state.successDays[d] === "success") streak++;
-      else break;
-    }
-  }
-  document.getElementById("hStreak").textContent = streak;
+  document.getElementById("hStreak").textContent = streakAsOf(viewDay);
 
   // Calories for the viewed day — shown in grid header
   const calEntries = state.calories[viewDay] || [];
@@ -1869,10 +1870,7 @@ function renderProgressView() {
 
   // Month bar (based on viewed month)
   const daysIn = DAYS_IN_VIEW();
-  const visibleDays =
-    viewYear === CURRENT_YEAR && viewMonth === CURRENT_MONTH
-      ? CURRENT_DAY
-      : daysIn;
+  const visibleDays = isCurrentMonth() ? CURRENT_DAY : daysIn;
   const mPct = Math.round((visibleDays / daysIn) * 100);
   document.getElementById("monthFill").style.width = mPct + "%";
   document.getElementById("dayProgress").textContent = `Day ${Math.min(
@@ -2001,25 +1999,9 @@ function renderProgressView() {
     }
   }
 
-  // Streak — based on previous day; if today unmarked count from yesterday; fail resets to 0
-  let streak = 0,
-    bestStreak = 0,
-    cur = 0;
-  const isViewingToday =
-    viewYear === CURRENT_YEAR &&
-    viewMonth === CURRENT_MONTH &&
-    viewDay === CURRENT_DAY;
-  const todayVerdict = state.successDays[viewDay];
-  if (isViewingToday && todayVerdict === "fail") {
-    streak = 0;
-  } else {
-    const streakStart =
-      isViewingToday && todayVerdict !== "success" ? viewDay - 1 : viewDay;
-    for (let d = streakStart; d >= 1; d--) {
-      if (state.successDays[d] === "success") streak++;
-      else break;
-    }
-  }
+  const streak = streakAsOf(viewDay);
+  let bestStreak = streakCarry,
+    cur = streakCarry;
   for (let d = 1; d <= visibleDays; d++) {
     if (state.successDays[d] === "success") {
       cur++;
@@ -2047,12 +2029,7 @@ function renderProgressView() {
     if (future) cls = "future-hm";
     else if (v === "success") cls = "succ";
     else if (v === "fail") cls = "fail";
-    if (
-      viewYear === CURRENT_YEAR &&
-      viewMonth === CURRENT_MONTH &&
-      d === CURRENT_DAY
-    )
-      cls += " today-hm";
+    if (isToday(d)) cls += " today-hm";
     if (d === viewDay) cls += " today-hm";
     if (hasNote) cls += " has-note";
     if (hasCal) cls += " has-cal";
@@ -2070,10 +2047,7 @@ function renderProgressView() {
   document.getElementById("heatmap").innerHTML = hmHtml;
 
   // Per-habit streaks — consecutive applicable days each habit was done
-  const isViewDay =
-    viewYear === CURRENT_YEAR &&
-    viewMonth === CURRENT_MONTH &&
-    viewDay === CURRENT_DAY;
+  const isViewDay = isToday(viewDay);
   const habitStreaks = habits.map((h) => {
     const activeToday = isHabitActiveOnDate(h, viewYear, viewMonth, viewDay);
     const todayDone = activeToday && isDoneValue(state.checks[viewDay]?.[h.id]);
@@ -2185,13 +2159,9 @@ function openDayModal(day) {
 
 function setDayVerdict(day, verdict) {
   const cur = state.successDays[day];
-  const isToday =
-    viewYear === CURRENT_YEAR &&
-    viewMonth === CURRENT_MONTH &&
-    day === CURRENT_DAY;
 
   // Streak protection when setting fail via day modal
-  if (verdict === "fail" && cur !== "fail" && isToday) {
+  if (verdict === "fail" && cur !== "fail" && isToday(day)) {
     const streak = _computeCurrentStreak();
     if (streak > 0) {
       const confirmBtn = document.getElementById("streakConfirmBtn");
@@ -2220,7 +2190,7 @@ function _applyVerdict(day, verdict) {
   const cur = state.successDays[day];
   if (cur === verdict) delete state.successDays[day];
   else state.successDays[day] = verdict;
-  scheduleSave();
+  saveMonthFields({ [`successDays.${day}`]: state.successDays[day] });
   renderStats();
   renderStatusBanner();
   renderProgressView();
@@ -2241,13 +2211,18 @@ function changeViewMonth(offset) {
     m = 0;
     y += 1;
   }
-  viewMonth = m;
-  viewYear = y;
-  // clamp viewDay
-  const dim = DAYS_IN_VIEW();
-  if (viewDay > dim) viewDay = dim;
-  subscribeToMonth(viewYear, viewMonth);
+  setViewMonth(y, m);
   render();
+}
+
+// Points the view at month (y, m), clamping viewDay and re-subscribing only
+// when the month actually changes.
+function setViewMonth(y, m) {
+  const changed = y !== viewYear || m !== viewMonth || !MONTH_DOC_ID;
+  viewYear = y;
+  viewMonth = m;
+  viewDay = Math.min(viewDay, DAYS_IN_VIEW());
+  if (changed) subscribeToMonth(viewYear, viewMonth);
 }
 
 function prevMonth() {
@@ -2268,12 +2243,21 @@ function nextDay() {
   render();
 }
 function goToToday() {
-  viewYear = CURRENT_YEAR;
-  viewMonth = CURRENT_MONTH;
+  setViewMonth(CURRENT_YEAR, CURRENT_MONTH);
   viewDay = CURRENT_DAY;
   dismissAISuggestion();
-  subscribeToMonth(viewYear, viewMonth);
   render();
+}
+
+// Rolls "today" forward when the date changes while the app stays open
+// (e.g. a phone left on overnight). Follows along if the user was on today.
+function syncToday() {
+  const wasOnToday = isToday(viewDay);
+  const before = [CURRENT_YEAR, CURRENT_MONTH, CURRENT_DAY].join();
+  readToday();
+  if ([CURRENT_YEAR, CURRENT_MONTH, CURRENT_DAY].join() === before) return;
+  if (wasOnToday) goToToday();
+  else render();
 }
 
 // ── MONTH SELECTOR MODAL LOGIC ──
@@ -2305,14 +2289,7 @@ function renderMonthGrid() {
 }
 
 function selectMonthFromSelector(monthIndex) {
-  viewYear = selectorYear;
-  viewMonth = monthIndex;
-  
-  // Clamp viewDay if new month has fewer days
-  const dim = DAYS_IN_VIEW();
-  if (viewDay > dim) viewDay = dim;
-  
-  subscribeToMonth(viewYear, viewMonth);
+  setViewMonth(selectorYear, monthIndex);
   render();
   closeModal("monthSelectorModal");
 }
@@ -2470,18 +2447,25 @@ document.addEventListener("keydown", (e) => {
 
 // ── RESET ─────────────────────────────────────────────────────────────────────
 
-async function confirmReset() {
+function confirmReset() {
   if (
     !confirm(
       `Reset all data for ${MONTH_NAMES[viewMonth]} ${viewYear}? This cannot be undone.`
     )
   )
     return;
-  state.checks = {};
-  state.successDays = {};
-  state.notes = {};
-  // Keep `monthNote` and habits intact
-  await flushSave();
+  // Habits and the global month note live in other docs and are kept
+  delete _queuedFields[MONTH_DOC_ID];
+  applyMonthData({});
+  saveMonthFields({
+    checks: undefined,
+    successDays: undefined,
+    notes: undefined,
+    calories: undefined,
+    markOrder: undefined,
+    bodyAnalysis: undefined, // left over from the removed photo check-ins
+  });
+  flushMonthFields();
   render();
 }
 
@@ -2507,10 +2491,16 @@ function setSyncStatus(status) {
   if (!dot || !lbl) return;
   dot.className =
     "sync-dot" +
-    (status === "offline" ? " offline" : status === "saving" ? " saving" : "");
+    (status === "offline" || status === "error"
+      ? " offline"
+      : status === "saving"
+      ? " saving"
+      : "");
   lbl.textContent =
     status === "offline"
       ? "Offline"
+      : status === "error"
+      ? "Save failed"
       : status === "saving"
       ? "Saving…"
       : "Synced";
@@ -2524,25 +2514,27 @@ function uid() {
 
 // ── ANTI-SLIP FUNCTIONS ───────────────────────────────────────────────────────
 
-/**
- * Compute the current streak (consecutive success days ending at today or yesterday)
- */
-function _computeCurrentStreak() {
-  const isViewToday =
-    viewYear === CURRENT_YEAR &&
-    viewMonth === CURRENT_MONTH &&
-    viewDay === CURRENT_DAY;
-  const todayVerdict = state.successDays[CURRENT_DAY];
-  if (!isViewToday) return 0; // only compute for current month
-  if (todayVerdict === "fail") return 0;
-  const streakStart =
-    todayVerdict !== "success" ? CURRENT_DAY - 1 : CURRENT_DAY;
-  let streak = 0;
-  for (let d = streakStart; d >= 1; d--) {
-    if (state.successDays[d] === "success") streak++;
-    else break;
+// Successful days in a row ending on `day` of the viewed month, continuing
+// into earlier months via streakCarry.
+function successRunEndingAt(day) {
+  for (let d = day; d >= 1; d--) {
+    if (state.successDays[d] !== "success") return day - d;
   }
-  return streak;
+  return day + streakCarry;
+}
+
+// Streak as of `day`. For today, an unmarked verdict doesn't break the streak
+// (it counts up to yesterday); a fail resets it to 0.
+function streakAsOf(day) {
+  const v = state.successDays[day];
+  if (!isToday(day)) return successRunEndingAt(day);
+  if (v === "fail") return 0;
+  return successRunEndingAt(v === "success" ? day : day - 1);
+}
+
+// The live streak as of today, regardless of which day is being viewed
+function _computeCurrentStreak() {
+  return isCurrentMonth() ? streakAsOf(CURRENT_DAY) : 0;
 }
 
 /**
@@ -2550,16 +2542,13 @@ function _computeCurrentStreak() {
  * Returns { recentDays, failCount, successCount, unmarkedCount, recentFailStreak, recentSuccStreak }
  */
 function computeSlipState() {
-  const isCurrentMonth =
-    viewYear === CURRENT_YEAR && viewMonth === CURRENT_MONTH;
-  const today = isCurrentMonth ? CURRENT_DAY : DAYS_IN_VIEW();
+  const today = isCurrentMonth() ? CURRENT_DAY : DAYS_IN_VIEW();
   const recentDays = [];
   for (let i = 6; i >= 0; i--) {
     const d = today - i;
     if (d < 1) continue;
     const verdict = state.successDays[d];
-    const isToday = isCurrentMonth && d === CURRENT_DAY;
-    recentDays.push({ day: d, verdict, isToday });
+    recentDays.push({ day: d, verdict, isToday: isToday(d) });
   }
 
   let failCount = 0,
@@ -2609,10 +2598,7 @@ function renderStatusBanner() {
   const titleEl = document.getElementById("statusBannerTitle");
   const subEl = document.getElementById("statusBannerSub");
   if (!banner || !iconEl || !titleEl || !subEl) return;
-
-  const isCurrentMonth =
-    viewYear === CURRENT_YEAR && viewMonth === CURRENT_MONTH;
-  if (!isCurrentMonth) {
+  if (!isCurrentMonth()) {
     // Looking at a past/future month — neutral
     banner.className = "status-banner state-neutral";
     iconEl.textContent = "\uD83D\uDCCB";
@@ -2738,8 +2724,6 @@ function renderSlipHistory() {
     recentSuccStreak,
   } = computeSlipState();
   const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  const isCurrentMonth =
-    viewYear === CURRENT_YEAR && viewMonth === CURRENT_MONTH;
 
   // Build chips
   let chipsHtml = "";
@@ -2782,7 +2766,7 @@ function renderSlipHistory() {
   } else if (failCount === 1) {
     warnCls = "warn-caution";
     warnText = `\u26A0 One slip this week. Keep it isolated — don\'t let it spread.`;
-  } else if (!isCurrentMonth) {
+  } else if (!isCurrentMonth()) {
     warnCls = "warn-neutral";
     warnText = "Viewing a past month.";
   } else {
@@ -2887,3 +2871,10 @@ window.addEventListener("resize", () => {
   updateResponsiveSingleDay();
 });
 updateResponsiveSingleDay();
+
+setInterval(syncToday, 60 * 1000);
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) flushMonthFields();
+  else syncToday();
+});
+window.addEventListener("pagehide", flushMonthFields);
