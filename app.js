@@ -3,7 +3,6 @@
 const FB_CONFIG_KEY = "tracker_fb_config";
 
 let db = null;
-let storage = null;
 let MONTH_DOC_ID = "";
 let unsubscribe = null;
 
@@ -14,7 +13,6 @@ let state = {
   successDays: {}, // {day: 'success'|'fail'}
   notes: {}, // {day: string}
   calories: {}, // {day: [{id, food, cal, time}]}
-  bodyAnalysis: {}, // {day: {summary, focus, note, capturedAt, photoUrl}}
   calorieGoal: 2000, // daily kcal target
   markOrder: {}, // {day: [habitId, ...]} — order habits were first marked
 };
@@ -153,14 +151,6 @@ async function initFirebase(config) {
 
   const app = initializeApp(config, config.projectId); // unique name prevents re-init error
   db = getFirestore(app);
-  try {
-    const { getStorage } = await import(
-      "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js"
-    );
-    storage = getStorage(app);
-  } catch (err) {
-    console.warn("Firebase Storage not available:", err);
-  }
   // Enable IndexedDB offline persistence where supported
   try {
     const { enableIndexedDbPersistence } = await import(
@@ -249,14 +239,12 @@ async function subscribeToMonth(y, m) {
         state.successDays = data.successDays || {};
         state.notes = data.notes || {};
         state.calories = data.calories || {};
-        state.bodyAnalysis = data.bodyAnalysis || {};
         state.markOrder = data.markOrder || {};
       } else {
         state.checks = {};
         state.successDays = {};
         state.notes = {};
         state.calories = {};
-        state.bodyAnalysis = {};
         state.markOrder = {};
       }
       render();
@@ -317,7 +305,6 @@ async function flushSave() {
     successDays: state.successDays,
     notes: state.notes,
     calories: state.calories,
-    bodyAnalysis: state.bodyAnalysis,
     markOrder: state.markOrder,
     year: viewYear,
     month: viewMonth + 1,
@@ -485,17 +472,6 @@ Use typical Indian household portions. Be specific about serving size in the des
 Return ONLY a valid JSON array, no markdown, no extra text:
 [{"food": "Rice", "calories": 250, "description": "~1 cup cooked basmati rice"}, ...]
 If no food is identifiable in the image, return: []`;
-  const raw = await callGemini(prompt, base64, mimeType);
-  return parseGeminiJSON(raw);
-}
-
-async function estimateBodyAnalysisFromPhoto(base64, mimeType) {
-  const prompt = `You are a positive wellness coach and body awareness companion.
-Look at the photo and provide a short, encouraging daily check-in summary.
-Focus on posture, energy, confidence, and motivation for healthy habits.
-Return ONLY valid JSON with these fields:
-{"summary": "short supportive summary", "focus": "single focus area", "note": "motivational note"}
-If the photo is not clear enough for body analysis, return: {"summary": "", "focus": "", "note": ""}`;
   const raw = await callGemini(prompt, base64, mimeType);
   return parseGeminiJSON(raw);
 }
@@ -679,11 +655,6 @@ function _fileToBase64(file) {
   });
 }
 
-async function _fileToDataURL(file) {
-  const { dataUrl } = await _fileToBase64(file);
-  return dataUrl;
-}
-
 async function _resizeImageForUpload(
   file,
   maxWidth = 640,
@@ -714,11 +685,6 @@ async function _resizeImageForUpload(
     img.onerror = () => reject(new Error("Failed to load image for resizing"));
     img.src = dataUrl;
   });
-}
-
-async function uploadBodyPhoto(year, month, day, dataUrl) {
-  // Persist the resized image inline to avoid storage permission issues.
-  return dataUrl;
 }
 
 function _setPhotoLoading(loading) {
@@ -797,129 +763,6 @@ function addPhotoEntries() {
 }
 
 // ── AI SETUP ──────────────────────────────────────────────────────────────────
-
-function triggerBodyCamera() {
-  document.getElementById("bodyCameraInput").click();
-}
-
-function triggerBodyPhotoUpload() {
-  document.getElementById("bodyPhotoInput").click();
-}
-
-async function handleBodyPhotoUpload(event) {
-  const file = event.target.files?.[0];
-  event.target.value = "";
-  if (!file) return;
-
-  try {
-    const { dataUrl } = await _resizeImageForUpload(file);
-    state.bodyAnalysis[viewDay] = {
-      ...(state.bodyAnalysis[viewDay] || {}),
-      capturedAt: Date.now(),
-      photo: dataUrl,
-    };
-    scheduleSave();
-    renderBodyView();
-  } catch (e) {
-    console.error("Body photo save failed:", e);
-    alert("Could not save photo. Please try again.");
-  }
-}
-
-function renderBodyView() {
-  const photos = Object.values(state.bodyAnalysis || {}).filter(
-    (e) => e.photo || e.photoUrl
-  );
-  const completedDays = photos.length;
-  const percent = Math.round(
-    (completedDays / Math.max(1, DAYS_IN_VIEW())) * 100
-  );
-
-  const daysTrackedEl = document.getElementById("bodyDaysTracked");
-  const trackedPercentEl = document.getElementById("bodyTrackedPercent");
-  if (daysTrackedEl) daysTrackedEl.textContent = completedDays;
-  if (trackedPercentEl) trackedPercentEl.textContent = `${percent}%`;
-
-  const historyEl = document.getElementById("bodyHistory");
-  if (!historyEl) return;
-
-  const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  const daysInMonth = DAYS_IN_VIEW();
-
-  let html = `<div class="body-day-grid">`;
-  for (let d = 1; d <= daysInMonth; d++) {
-    const entry = state.bodyAnalysis?.[d];
-    const hasPhoto = !!(entry?.photo || entry?.photoUrl);
-    const isToday =
-      viewYear === CURRENT_YEAR &&
-      viewMonth === CURRENT_MONTH &&
-      d === CURRENT_DAY;
-    const future = isFuture(d);
-    const dow = DOW[new Date(viewYear, viewMonth, d).getDay()];
-    let cls = "body-day-block";
-    if (hasPhoto) cls += " has-photo";
-    if (isToday) cls += " is-today";
-    if (future) cls += " is-future";
-    const onclick = hasPhoto ? `onclick="showBodyHistory(${d})"` : "";
-    html += `<div class="${cls}" ${onclick} title="${
-      hasPhoto
-        ? `View photo — ${MONTH_NAMES[viewMonth]} ${d}`
-        : MONTH_NAMES[viewMonth] + " " + d
-    }">
-      <span class="bdb-num">${d}</span>
-      <span class="bdb-dow">${dow}</span>
-      ${hasPhoto ? `<span class="bdb-cam">📷</span>` : ""}
-    </div>`;
-  }
-  html += `</div>`;
-
-  if (!completedDays) {
-    html += `<div class="body-history-empty">No photos yet for ${MONTH_NAMES[viewMonth]} ${viewYear}. Tap a day or use 📸 above to add your first check-in.</div>`;
-  }
-
-  historyEl.innerHTML = html;
-}
-
-function deleteBodyPhoto(day, event) {
-  if (event) event.stopPropagation();
-  if (!confirm(`Delete the photo for ${MONTH_NAMES[viewMonth]} ${day}?`))
-    return;
-  if (!state.bodyAnalysis || !state.bodyAnalysis[day]) return;
-  delete state.bodyAnalysis[day].photo;
-  delete state.bodyAnalysis[day].photoUrl;
-  if (Object.keys(state.bodyAnalysis[day]).length === 0)
-    delete state.bodyAnalysis[day];
-  scheduleSave();
-  renderBodyView();
-}
-
-function deleteBodyPhotoFromModal(day) {
-  closeModal("bodyHistoryModal");
-  deleteBodyPhoto(day, null);
-}
-
-function showBodyHistory(day) {
-  const entry = state.bodyAnalysis[day];
-  if (!entry) return;
-  const modalContent = document.getElementById("bodyHistoryModalContent");
-  if (!modalContent) return;
-  const src = entry.photoUrl || entry.photo;
-  const isToday =
-    viewYear === CURRENT_YEAR &&
-    viewMonth === CURRENT_MONTH &&
-    day === CURRENT_DAY;
-  const dateLabel = `${MONTH_NAMES[viewMonth]} ${day}, ${viewYear}${
-    isToday ? " · Today" : ""
-  }`;
-  modalContent.innerHTML = `
-    <div class="body-history-modal-date">${dateLabel}</div>
-    <img class="body-history-modal-img" src="${src}" alt="Body check-in ${day}" />
-    <div class="body-modal-delete-row">
-      <button class="btn-ghost danger" onclick="deleteBodyPhotoFromModal(${day})">🗑 Delete photo</button>
-    </div>
-  `;
-  openModal("bodyHistoryModal");
-}
 
 function openAISetup() {
   const existing = localStorage.getItem(GEMINI_KEY_KEY) || "";
@@ -1211,7 +1054,6 @@ function render() {
   renderHabitsList();
   renderStats();
   renderCalorieView();
-  renderBodyView();
   renderNotesView();
   renderStatusBanner(); // anti-slip banner
 }
@@ -1226,9 +1068,6 @@ function renderLabels() {
   const calEl = document.getElementById("calorieMonth");
   if (calEl)
     calEl.textContent = `${MONTH_NAMES[viewMonth]} ${viewDay}, ${viewYear}`;
-  const bodyMonthEl = document.getElementById("bodyMonth");
-  if (bodyMonthEl)
-    bodyMonthEl.textContent = `${MONTH_NAMES[viewMonth]} ${viewDay}, ${viewYear}`;
   const notesMonthEl = document.getElementById("notesMonth");
   if (notesMonthEl) notesMonthEl.textContent = label;
 }
@@ -2497,7 +2336,6 @@ function showView(name) {
     renderSlipHistory();
   }
   if (name === "calories") renderCalorieView();
-  if (name === "body") renderBodyView();
   if (name === "notes") renderNotesView();
   // Auto-close sidebar on mobile after selecting a view
   if (window.innerWidth <= 640) {
@@ -3015,9 +2853,6 @@ Object.assign(window, {
   openAvgRangeModal,
   toggleAvgRangeFields,
   saveAvgRangeSettings,
-  deleteBodyPhoto,
-  deleteBodyPhotoFromModal,
-  showBodyHistory,
   // anti-slip
   renderStatusBanner,
   renderSlipHistory,

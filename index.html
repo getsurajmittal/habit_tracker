@@ -65,9 +65,6 @@
       <button class="nav-item" onclick="showView('calories')" id="nav-calories">
         <span class="nav-icon">◈</span><span class="nav-label">Calories</span>
       </button>
-      <button class="nav-item" onclick="showView('body')" id="nav-body">
-        <span class="nav-icon">🧍</span><span class="nav-label">Photos</span>
-      </button>
       <button class="nav-item" onclick="showView('notes')" id="nav-notes">
         <span class="nav-icon">✎</span><span class="nav-label">Notes</span>
       </button>
@@ -321,37 +318,6 @@
       <div id="calorieLog" class="cal-log"></div>
     </div>
 
-    <!-- ── PHOTO CHECK-INS VIEW ── -->
-    <div id="view-body" class="view">
-      <div class="view-header">
-        <div>
-          <div class="view-eyebrow clickable-eyebrow" onclick="openMonthSelector()" title="Change Month"><span id="bodyMonth">—</span> <span style="font-size: 8px;">▼</span></div>
-          <h2 class="view-title">Photo Check-ins</h2>
-        </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn-primary" onclick="triggerBodyCamera()">📷 Camera</button>
-          <button class="btn-ghost" onclick="triggerBodyPhotoUpload()">📁 Upload Photo</button>
-        </div>
-      </div>
-
-      <div class="body-stats-row">
-        <div class="body-stat">
-          <div class="body-stat-val" id="bodyDaysTracked">0</div>
-          <div class="body-stat-label">Photos saved</div>
-        </div>
-        <div class="body-stat">
-          <div class="body-stat-val" id="bodyTrackedPercent">0%</div>
-          <div class="body-stat-label">Days tracked</div>
-        </div>
-      </div>
-
-      <div class="body-history" id="bodyHistory"></div>
-      <!-- Camera: forces device camera on mobile -->
-      <input type="file" id="bodyCameraInput" accept="image/*" capture="environment" style="display:none" onchange="handleBodyPhotoUpload(event)">
-      <!-- Upload: opens gallery / file picker -->
-      <input type="file" id="bodyPhotoInput" accept="image/*" style="display:none" onchange="handleBodyPhotoUpload(event)">
-    </div>
-
     <!-- ── NOTES VIEW ── -->
     <div id="view-notes" class="view">
       <div class="view-header">
@@ -418,10 +384,6 @@
     <span class="tab-btn-icon">◈</span>
     <span class="tab-btn-label">Calories</span>
   </button>
-  <button class="tab-btn" id="tab-body" onclick="showView('body')">
-    <span class="tab-btn-icon">🧍</span>
-    <span class="tab-btn-label">Body</span>
-  </button>
   <button class="tab-btn" id="tab-notes" onclick="showView('notes')">
     <span class="tab-btn-icon">✎</span>
     <span class="tab-btn-label">Notes</span>
@@ -467,20 +429,6 @@
     <div class="modal-actions">
       <button class="btn-ghost" onclick="closeModal('avgRangeModal')">Cancel</button>
       <button class="btn-primary" onclick="saveAvgRangeSettings()">Apply</button>
-    </div>
-  </div>
-</div>
-
-<!-- ── BODY HISTORY MODAL ── -->
-<div class="modal-overlay hidden" id="bodyHistoryModal">
-  <div class="modal wide">
-    <div class="modal-header">
-      <div class="modal-title">Body Check-in</div>
-      <button class="modal-close" onclick="closeModal('bodyHistoryModal')">✕</button>
-    </div>
-    <div id="bodyHistoryModalContent"></div>
-    <div class="modal-actions">
-      <button class="btn-ghost" onclick="closeModal('bodyHistoryModal')">Close</button>
     </div>
   </div>
 </div>
