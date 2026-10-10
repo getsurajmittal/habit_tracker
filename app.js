@@ -389,6 +389,7 @@ function saveHabits() {
 
 const GEMINI_KEY_KEY = "tracker_gemini_key";
 const GEMINI_MODEL_KEY = "tracker_gemini_model";
+const GEMINI_API = "https://generativelanguage.googleapis.com/v1beta";
 
 // Queries the user's own model list and picks the best available flash model.
 // Result is cached in localStorage so subsequent calls are instant.
@@ -397,11 +398,9 @@ async function _resolveGeminiModel(key) {
   if (cached) return cached;
 
   try {
-    const resp = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(
-        key
-      )}&pageSize=100`
-    );
+    const resp = await fetch(`${GEMINI_API}/models?pageSize=100`, {
+      headers: { "x-goog-api-key": key },
+    });
     if (!resp.ok) return "gemini-2.0-flash";
     const data = await resp.json();
 
@@ -460,12 +459,11 @@ async function callGemini(textPrompt, imageBase64 = null, mimeType = null) {
   parts.push({ text: textPrompt });
 
   const resp = await fetchWithTimeout(
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(
-      key
-    )}`,
+    `${GEMINI_API}/models/${model}:generateContent`,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      // Key goes in a header rather than the URL so it stays out of logs/history
+      headers: { "Content-Type": "application/json", "x-goog-api-key": key },
       body: JSON.stringify({
         contents: [{ parts }],
         generationConfig: { temperature: 0.2, maxOutputTokens: 600 },
@@ -750,12 +748,12 @@ function _showPhotoResults(results) {
       <label class="photo-result-check">
         <input type="checkbox" checked onchange="togglePhotoEntry(${i},this.checked)">
         <div class="photo-result-info">
-          <div class="photo-result-food">${item.food}</div>
-          <div class="photo-result-desc">${item.description}</div>
+          <div class="photo-result-food">${esc(item.food)}</div>
+          <div class="photo-result-desc">${esc(item.description)}</div>
         </div>
       </label>
       <div class="photo-result-right">
-        <input class="form-input cal-num-input" type="number" value="${item.calories}"
+        <input class="form-input cal-num-input" type="number" value="${parseInt(item.calories, 10) || 0}"
           min="1" max="9999" onchange="updatePhotoEntryCalories(${i},this.value)">
         <span class="cal-goal-label">kcal</span>
       </div>
@@ -897,7 +895,7 @@ function renderCalorieView() {
     .forEach((entry) => {
       html += `<div class="cal-entry">
       <div class="cal-entry-left">
-        <div class="cal-entry-food">${entry.food}</div>
+        <div class="cal-entry-food">${esc(entry.food)}</div>
         ${entry.time ? `<div class="cal-entry-time">${entry.time}</div>` : ""}
       </div>
       <div class="cal-entry-right">
@@ -1156,13 +1154,7 @@ function renderDayNoteBanner() {
     banner.className = "day-note-banner dnb-has-note";
     banner.innerHTML = `<div class="dnb-label">${
       fut ? "\u270e Plan" : "\u270e Note"
-    } \u2014 ${dateStr}</div><div class="dnb-text">${note
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(
-        /\n/g,
-        "<br>"
-      )}</div><button class="dnb-edit" onclick="openNote(${viewDay})">Edit</button>`;
+    } \u2014 ${dateStr}</div><div class="dnb-text">${escMultiline(note)}</div><button class="dnb-edit" onclick="openNote(${viewDay})">Edit</button>`;
   } else {
     banner.className = "day-note-banner dnb-empty";
     banner.innerHTML = `<button class="dnb-add" onclick="openNote(${viewDay})">${
@@ -1277,7 +1269,7 @@ function renderGridBody() {
   // Helper: render one habit row
   const habitRow = (habit) => {
     const tid = habit.id;
-    let row = `<tr><td class="td-task">${habit.name}</td>`;
+    let row = `<tr><td class="td-task">${esc(habit.name)}</td>`;
     days.forEach((d) => {
       if (!isHabitActiveOnDate(habit, viewYear, viewMonth, d)) {
         row += `<td class="td-inactive" title="Not scheduled"></td>`;
@@ -1304,7 +1296,7 @@ function renderGridBody() {
           : "";
       row += `<td><button class="chk ${cls} ${future ? "future" : ""}"
           onclick="toggleCheck(${d},'${tid}',this)"
-          title="${habit.name} — Day ${d}">${icon}</button></td>`;
+          title="${esc(habit.name)} — Day ${d}">${icon}</button></td>`;
     });
     row += `</tr>`;
     return row;
@@ -1567,13 +1559,7 @@ function renderNotesView() {
     const note = state.notes[d];
     const fut = d > todayDay;
     const dow = DOW[new Date(viewYear, viewMonth, d).getDay()];
-    const safe = note
-      ? note
-          .replace(/&/g, "&amp;")
-          .replace(/</g, "&lt;")
-          .replace(/>/g, "&gt;")
-          .replace(/\n/g, "<br>")
-      : "";
+    const safe = note ? escMultiline(note) : "";
 
     if (note) {
       html += `<div class="journal-card${isToday(d) ? " today" : ""}">
@@ -1807,13 +1793,13 @@ function renderHabitsList() {
       if (h.startDate) schedParts.push("from " + h.startDate);
       if (h.endDate) schedParts.push("until " + h.endDate);
       const schedBadge = schedParts.length
-        ? `<span class="habit-sched">${schedParts.join(" · ")}</span>`
+        ? `<span class="habit-sched">${esc(schedParts.join(" · "))}</span>`
         : "";
       return `
     <div class="habit-item" data-habit-id="${h.id}">
       <div class="habit-item-left">
         <span class="habit-drag" title="Hold &amp; drag to reorder">⠿</span>
-        <span class="habit-name">${h.name}</span>${schedBadge}
+        <span class="habit-name">${esc(h.name)}</span>${schedBadge}
       </div>
       <div class="habit-actions">
         <button class="habit-btn" onclick="openEditHabit('${h.id}')" title="Edit">✎</button>
@@ -2079,7 +2065,7 @@ function renderProgressView() {
         : "var(--green)";
     const barWidth = Math.round((hstreak / maxStreak) * 100);
     barsHtml += `<div class="hbar-row">
-      <div class="hbar-name" title="${h.name}">${h.name}</div>
+      <div class="hbar-name" title="${esc(h.name)}">${esc(h.name)}</div>
       <div class="hbar-track"><div class="hbar-fill" style="width:${barWidth}%;background:${color}"></div></div>
       <div class="hbar-meta">
         <span class="hbar-pct" style="color:${color}">${hstreak}</span>
@@ -2109,18 +2095,18 @@ function openDayModal(day) {
     const vraw = dayMap[h.id];
     const vnorm = normalizeCheckValue(vraw);
     const icon = vnorm === "dash" ? "—" : "✓";
-    html += `<div class="day-modal-task done">${icon} ${h.name}</div>`;
+    html += `<div class="day-modal-task done">${icon} ${esc(h.name)}</div>`;
   });
   pending.forEach((h) => {
     const vraw = dayMap[h.id];
     const vnorm = normalizeCheckValue(vraw);
     const icon = vnorm === "cross" ? "✕" : "·";
-    html += `<div class="day-modal-task pending">${icon} ${h.name}</div>`;
+    html += `<div class="day-modal-task pending">${icon} ${esc(h.name)}</div>`;
   });
   html += `</div>`;
 
   if (note) {
-    html += `<div class="day-modal-note">${note}</div>`;
+    html += `<div class="day-modal-note">${escMultiline(note)}</div>`;
   }
 
   // Calorie summary for the day
@@ -2507,6 +2493,19 @@ function setSyncStatus(status) {
 }
 
 // ── UTILS ─────────────────────────────────────────────────────────────────────
+
+// Escapes text for safe interpolation into innerHTML (content and attributes)
+function esc(str) {
+  return String(str ?? "").replace(
+    /[&<>"']/g,
+    (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
+  );
+}
+
+function escMultiline(str) {
+  return esc(str).replace(/\n/g, "<br>");
+}
 
 function uid() {
   return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
